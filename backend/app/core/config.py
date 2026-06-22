@@ -1,10 +1,3 @@
-from pydantic import BaseModel
+from app.core.settings import Settings, get_settings
 
-
-class Settings(BaseModel):
-    app_name: str = "Fleet Trips API"
-    environment: str = "development"
-    snapshot_path: str = "/tmp/fleet_snapshot.json"
-
-
-settings = Settings()
+settings = get_settings()

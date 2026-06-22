@@ -4,6 +4,9 @@ services:
       context: ./backend
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - ODOO_DATABASE_URL=${ODOO_DATABASE_URL}
     ports:
       - "8004:8004"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8004
