@@ -1,0 +1,3 @@
+# Frontend
+
+Dashboard application placeholder.
