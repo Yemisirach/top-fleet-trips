@@ -26,3 +26,22 @@ Fleet workflow platform for managing trips, vehicle assignments, payments, recei
 2. Implement the FastAPI service contract.
 3. Implement workers and queue/event handling.
 4. Add Docker Compose for local and deployment runs.
+
+## Current Status
+
+- FastAPI service scaffolded
+- Trips, vehicles, and dashboard snapshot routes exist
+- In-memory repository is wired for development
+- Docker Compose is available for local deployment
+
+## API Endpoints
+
+- `GET /health`
+- `GET /api/trips`
+- `POST /api/trips`
+- `GET /api/trips/{trip_id}`
+- `PATCH /api/trips/{trip_id}`
+- `POST /api/trips/{trip_id}/expense-lines`
+- `GET /api/vehicles`
+- `POST /api/vehicles/supervisors`
+- `GET /api/dashboard/snapshot`

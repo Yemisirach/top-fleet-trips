@@ -1,0 +1,9 @@
+services:
+  fleet-api:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    ports:
+      - "8004:8004"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8004
