@@ -1,7 +1,19 @@
 from collections.abc import Iterable
 from datetime import datetime
 
-from app.models.trip import DashboardSnapshot, Trip, TripTimelineEntry, TripState, VehicleSupervisor
+from app.models.trip import (
+    DashboardSnapshot,
+    ExpenseType,
+    FinancialTemplate,
+    PaymentRequest,
+    Receivable,
+    RevenueType,
+    Trip,
+    TripLocation,
+    TripTimelineEntry,
+    TripState,
+    VehicleSupervisor,
+)
 
 
 class MemoryRepository:
@@ -9,6 +21,12 @@ class MemoryRepository:
         self.trips: dict[str, Trip] = {}
         self.timeline_entries: list[TripTimelineEntry] = []
         self.supervisors: list[VehicleSupervisor] = []
+        self.locations: dict[str, TripLocation] = {}
+        self.expense_types: dict[str, ExpenseType] = {}
+        self.revenue_types: dict[str, RevenueType] = {}
+        self.financial_templates: dict[str, FinancialTemplate] = {}
+        self.receivables: dict[str, Receivable] = {}
+        self.payment_requests: dict[str, PaymentRequest] = {}
 
     def list_trips(self) -> list[Trip]:
         return list(self.trips.values())
@@ -68,6 +86,8 @@ class MemoryRepository:
             ],
             payment_summary=payment_summary,
             trip_supervisors=self.supervisors,
+            receivables=list(self.receivables.values()),
+            payment_requests=list(self.payment_requests.values()),
         )
 
     def _recalculate_trip(self, trip: Trip) -> None:
@@ -78,6 +98,48 @@ class MemoryRepository:
         trip.payment_request_count = len(trip.expense_line_ids)
         trip.receivable_count = len(trip.revenue_line_ids)
         trip.order_receivable_count = len(trip.revenue_line_ids)
+
+    def list_locations(self) -> list[TripLocation]:
+        return list(self.locations.values())
+
+    def save_location(self, location: TripLocation) -> TripLocation:
+        self.locations[location.id] = location
+        return location
+
+    def list_expense_types(self) -> list[ExpenseType]:
+        return list(self.expense_types.values())
+
+    def save_expense_type(self, expense_type: ExpenseType) -> ExpenseType:
+        self.expense_types[expense_type.id] = expense_type
+        return expense_type
+
+    def list_revenue_types(self) -> list[RevenueType]:
+        return list(self.revenue_types.values())
+
+    def save_revenue_type(self, revenue_type: RevenueType) -> RevenueType:
+        self.revenue_types[revenue_type.id] = revenue_type
+        return revenue_type
+
+    def list_financial_templates(self) -> list[FinancialTemplate]:
+        return list(self.financial_templates.values())
+
+    def save_financial_template(self, template: FinancialTemplate) -> FinancialTemplate:
+        self.financial_templates[template.id] = template
+        return template
+
+    def list_receivables(self) -> list[Receivable]:
+        return list(self.receivables.values())
+
+    def save_receivable(self, receivable: Receivable) -> Receivable:
+        self.receivables[receivable.id] = receivable
+        return receivable
+
+    def list_payment_requests(self) -> list[PaymentRequest]:
+        return list(self.payment_requests.values())
+
+    def save_payment_request(self, payment_request: PaymentRequest) -> PaymentRequest:
+        self.payment_requests[payment_request.id] = payment_request
+        return payment_request
 
 
 repo = MemoryRepository()

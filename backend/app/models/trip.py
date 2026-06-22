@@ -23,6 +23,18 @@ class TripLocation(BaseModel):
     notes: Optional[str] = None
 
 
+class ExpenseType(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str
+    notes: Optional[str] = None
+
+
+class RevenueType(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str
+    notes: Optional[str] = None
+
+
 class TripLine(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     description: str
@@ -114,6 +126,68 @@ class VehicleSupervisor(BaseModel):
     user_id: str
 
 
+class FinancialTemplateExpenseLine(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    expense_type_id: Optional[str] = None
+    description: str
+    amount: float = 0
+    quantity: float = 1
+
+
+class FinancialTemplateRevenueLine(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    revenue_type_id: Optional[str] = None
+    description: str
+    amount: float = 0
+    quantity: float = 1
+
+
+class FinancialTemplate(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str
+    expense_lines: list[FinancialTemplateExpenseLine] = Field(default_factory=list)
+    revenue_lines: list[FinancialTemplateRevenueLine] = Field(default_factory=list)
+
+
+class ReceivableLine(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    description: str
+    amount: float = 0
+    quantity: float = 1
+
+
+class Receivable(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    reference: str
+    trip_id: Optional[str] = None
+    receivable_type: str
+    customer_name: Optional[str] = None
+    contact: Optional[str] = None
+    amount_due: float = 0
+    payment_reference: Optional[str] = None
+    state: str = "draft"
+    confirmed_by_id: Optional[str] = None
+    confirmed_on: Optional[datetime] = None
+    approved_by_id: Optional[str] = None
+    approved_on: Optional[datetime] = None
+    line_ids: list[ReceivableLine] = Field(default_factory=list)
+
+
+class PaymentRequestLine(BaseModel):
+    item: str
+    description: str
+    amount: float = 0
+    quantity: float = 1
+
+
+class PaymentRequest(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    trip_id: Optional[str] = None
+    source_doc: Optional[str] = None
+    state: str = "draft"
+    line_ids: list[PaymentRequestLine] = Field(default_factory=list)
+
+
 class DashboardSnapshot(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.utcnow)
     active_trips: list[Trip] = Field(default_factory=list)
@@ -121,3 +195,5 @@ class DashboardSnapshot(BaseModel):
     current_location_summary: list[dict] = Field(default_factory=list)
     payment_summary: dict = Field(default_factory=dict)
     trip_supervisors: list[VehicleSupervisor] = Field(default_factory=list)
+    receivables: list[Receivable] = Field(default_factory=list)
+    payment_requests: list[PaymentRequest] = Field(default_factory=list)

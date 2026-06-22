@@ -1,8 +1,10 @@
 from app.models.trip import ExpenseLine, Trip, TripCreate, TripState, TripTimelineEntry, TripUpdate, VehicleSupervisor
+from app.services.catalog_service import seed_catalog_data
 from app.repositories.memory import repo
 
 
 def seed_sample_data() -> None:
+    seed_catalog_data()
     if repo.list_trips():
         return
 
@@ -61,4 +63,3 @@ def add_expense_line(trip_id: str, line: ExpenseLine) -> Trip | None:
 
 def assign_supervisors(supervisors: list[VehicleSupervisor]) -> None:
     repo.set_supervisors(supervisors)
-
