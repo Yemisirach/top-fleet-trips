@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fleet Dashboard</title>
+    <title>Fleet Dashboard — Timeline Tracking</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -62,6 +62,7 @@
             border-radius: 16px;
             padding: 24px;
             transition: transform 0.2s, border-color 0.2s;
+            cursor: pointer;
         }
         .stat-card:hover { transform: translateY(-4px); border-color: #60a5fa; }
         .stat-card .icon { font-size: 32px; margin-bottom: 12px; }
@@ -158,10 +159,121 @@
         }
         .revenue-card .amount.revenue { color: #34d399; }
         .revenue-card .amount.expense { color: #f87171; }
+        /* ===== Timeline styles ===== */
+        .trip-expandable {
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .trip-expandable:hover {
+            background: #1e293b;
+        }
+        .trip-expandable td:first-child::before {
+            content: '▶';
+            display: inline-block;
+            margin-right: 8px;
+            font-size: 12px;
+            transition: transform 0.2s;
+            color: #60a5fa;
+        }
+        .trip-expandable.expanded td:first-child::before {
+            transform: rotate(90deg);
+        }
+        .timeline-row {
+            background: #0b1120;
+        }
+        .timeline-card {
+            padding: 20px 40px;
+            border-bottom: 1px dashed #334155;
+        }
+        .timeline-card:last-child {
+            border-bottom: none;
+        }
+        .timeline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .timeline-header h3 {
+            font-size: 15px;
+            color: #e2e8f0;
+        }
+        .journey-stitch {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding: 12px 16px;
+            background: rgba(60, 150, 250, 0.1);
+            border: 1px solid rgba(60, 150, 250, 0.3);
+            border-radius: 8px;
+        }
+        .journey-stitch span {
+            font-weight: 600;
+            color: #60a5fa;
+        }
+        .journey-stitch .connector {
+            font-size: 18px;
+            color: #94a3b8;
+        }
+        .timeline-entries {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .timeline-entry {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: #1e293b;
+            transition: background 0.2s;
+        }
+        .timeline-entry:hover {
+            background: #2a3548;
+        }
+        .timeline-entry .source-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 80px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .source-gps { background: #451a03; color: #fbbf24; }
+        .source-odoo { background: #1e3a5f; color: #60a5fa; }
+        .source-supervisor { background: #064e3b; color: #34d399; }
+        .timeline-entry .time-stamp {
+            font-family: 'SF Mono', monospace;
+            font-size: 12px;
+            color: #94a3b8;
+            min-width: 160px;
+        }
+        .timeline-entry .location-text {
+            font-weight: 600;
+            flex: 1;
+        }
+        .timeline-entry .discrepancy-icon {
+            color: #f87171;
+            font-weight: 700;
+            font-size: 13px;
+            margin-left: 8px;
+        }
+        .timeline-entry .note-text {
+            font-size: 11px;
+            color: #6b7280;
+            flex: 1;
+            text-align: right;
+        }
         @media (max-width: 768px) {
             .grid-2 { grid-template-columns: 1fr; }
             .container { padding: 20px; }
             .header { flex-direction: column; gap: 16px; }
+            .timeline-card { padding: 16px; }
         }
     </style>
 </head>
@@ -169,7 +281,7 @@
     <div class="header">
         <div>
             <h1>🚛 Fleet Dashboard</h1>
-            <p>Real-time fleet operations overview</p>
+            <p>Real-time fleet operations with timeline tracking</p>
         </div>
         <div class="mode-toggle">
             <label for="mode">Mode:</label>
@@ -239,7 +351,7 @@
                 </div>
             </div>
             <div class="card" style="margin-top: 20px;">
-                <h2>Recent Trips</h2>
+                <h2>Recent Trips — Click to View Timeline</h2>
                 <table class="vehicles-table">
                     <thead>
                         <tr><th>ID</th><th>Name</th><th>From</th><th>To</th><th>State</th><th>Date</th><th>Revenue</th></tr>
@@ -252,9 +364,11 @@
     </div>
     <script>
         let currentMode = 'demo';
+        let expandedTripId = null;
 
         function changeMode() {
             currentMode = document.getElementById('mode').value;
+            expandedTripId = null;
             document.getElementById('loading').style.display = 'block';
             document.getElementById('content').style.display = 'none';
             loadData();
@@ -263,14 +377,9 @@
         async function loadData() {
             try {
                 const startTime = performance.now();
-
-                // Single endpoint — fast in demo mode
                 const res = await fetch(`/api/dashboard/full?mode=${currentMode}`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
                 const data = await res.json();
-
-                const endTime = performance.now();
-                console.log(`Dashboard loaded in ${(endTime - startTime).toFixed(0)}ms (${currentMode} mode)`);
 
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('content').style.display = 'block';
@@ -294,8 +403,7 @@
                 // Brand chart
                 const brands = data.vehicles_by_brand || [];
                 const maxCount = Math.max(...brands.map(b => b.count), 1);
-                const brandList = document.getElementById('brand-list');
-                brandList.innerHTML = brands.map(b => `
+                document.getElementById('brand-list').innerHTML = brands.map(b => `
                     <div class="brand-item">
                         <span>${b.brand}</span>
                         <div class="brand-bar"><div class="brand-bar-fill" style="width:${(b.count / maxCount * 100).toFixed(0)}%"></div></div>
@@ -305,33 +413,132 @@
 
                 // Trip states
                 const states = data.trips_by_state || [];
-                const statesList = document.getElementById('trip-states-list');
-                statesList.innerHTML = '<div class="trip-state-pie">' + states.map(s => {
+                document.getElementById('trip-states-list').innerHTML = '<div class="trip-state-pie">' + states.map(s => {
                     const cls = 'pie-' + s.state;
                     return `<div class="pie-segment ${cls}">${s.state}: ${s.count}</div>`;
                 }).join('') + '</div>';
 
-                // Recent trips table
-                const recentTrips = data.recent_trips || [];
-                const tbody = document.getElementById('trips-body');
-                tbody.innerHTML = recentTrips.map(t => `
-                    <tr>
-                        <td>${t.id}</td>
-                        <td>${t.name || '-'}</td>
-                        <td>${t.from_city || '-'}</td>
-                        <td>${t.to_city || '-'}</td>
-                        <td><span class="status ${t.state === 'done' ? 'status-inactive' : 'status-active'}">${t.state}</span></td>
-                        <td>${t.departure_date || '-'}</td>
-                        <td style="text-align:right">${formatMoney(t.total_revenue || 0)}</td>
-                    </tr>
-                `).join('');
-
+                renderTripsTable(data.recent_trips || []);
             } catch (err) {
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('error').style.display = 'block';
                 document.getElementById('error').textContent = 'Error loading data: ' + err.message;
                 console.error(err);
             }
+        }
+
+        function renderTripsTable(trips) {
+            const tbody = document.getElementById('trips-body');
+            let html = '';
+            trips.forEach(t => {
+                html += `<tr class="trip-expandable" data-trip-id="${t.id}" onclick="toggleTripTimeline(${t.id})">
+                    <td>${t.id}</td>
+                    <td>${t.name || '-'}</td>
+                    <td>${t.from_city || '-'}</td>
+                    <td>${t.to_city || '-'}</td>
+                    <td><span class="status ${t.state === 'done' ? 'status-inactive' : 'status-active'}">${t.state}</span></td>
+                    <td>${t.departure_date || '-'}</td>
+                    <td style="text-align:right">${formatMoney(t.total_revenue || 0)}</td>
+                </tr>`;
+                html += `<tr id="timeline-${t.id}" class="timeline-row" style="display:none;">
+                    <td colspan="7">
+                        <div class="timeline-card" id="timeline-content-${t.id}">
+                            <div style="text-align:center; padding: 20px; color: #94a3b8;" class="loading">Loading timeline...</div>
+                        </div>
+                    </td>
+                </tr>`;
+            });
+            tbody.innerHTML = html;
+        }
+
+        async function toggleTripTimeline(tripId) {
+            const row = document.querySelector(`.trip-expandable[data-trip-id="${tripId}"]`);
+            const timelineRow = document.getElementById(`timeline-${tripId}`);
+            if (!row || !timelineRow) return;
+
+            // Close any other open timeline
+            if (expandedTripId && expandedTripId !== tripId) {
+                const prevTimeline = document.getElementById(`timeline-${expandedTripId}`);
+                if (prevTimeline) prevTimeline.style.display = 'none';
+                const prevRow = document.querySelector(`.trip-expandable[data-trip-id="${expandedTripId}"]`);
+                if (prevRow) prevRow.classList.remove('expanded');
+            }
+
+            if (timelineRow.style.display === 'none') {
+                timelineRow.style.display = 'table-row';
+                row.classList.add('expanded');
+                expandedTripId = tripId;
+                // Load timeline data
+                loadTimeline(tripId);
+            } else {
+                timelineRow.style.display = 'none';
+                row.classList.remove('expanded');
+                expandedTripId = null;
+            }
+        }
+
+        async function loadTimeline(tripId) {
+            const container = document.getElementById(`timeline-content-${tripId}`);
+            if (!container) return;
+            container.innerHTML = '<div style="text-align:center; padding: 20px; color: #94a3b8;">Loading timeline...</div>';
+            try {
+                const res = await fetch(`/api/trips/${tripId}/timeline`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Timeline not found');
+                renderTimelineContent(container, data.timeline || []);
+            } catch (err) {
+                container.innerHTML = `<div style="text-align:center; padding: 20px; color: #fca5a5;">Error loading timeline: ${err.message}</div>`;
+            }
+        }
+
+        function renderTimelineContent(container, entries) {
+            if (entries.length === 0) {
+                container.innerHTML = '<div style="text-align:center; padding: 20px; color: #94a3b8;">No timeline entries.</div>';
+                return;
+            }
+
+            // Build stitched journey
+            const uniqueLocations = [...new Set(entries.map(e => e.location))];
+            const isActiveJourney = true; // For demo purposes
+
+            let html = '<div class="timeline-header"><h3>🛣️ Journey Timeline</h3>';
+            const discrepancyCount = entries.filter(e => e.discrepancy_flag).length;
+            if (discrepancyCount > 0) {
+                html += `<span style="color:#f87171; font-size:12px;">⚠️ ${discrepancyCount} GPS vs Odoo discrepancy${discrepancyCount>1?'s':''}</span>`;
+            }
+            html += '</div>';
+
+            // Stitched journey path
+            html += '<div class="journey-stitch">';
+            uniqueLocations.forEach((loc, i) => {
+                html += `<span>${loc}</span>`;
+                if (i < uniqueLocations.length - 1) html += '<span class="connector">→</span>';
+            });
+            html += '</div>';
+
+            // Timeline entries
+            html += '<div class="timeline-entries">';
+            for (const entry of entries) {
+                const date = new Date(entry.timestamp);
+                const timeStr = date.toLocaleString('en-US', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short', year: 'numeric' });
+                
+                let sourceClass = 'source-odoo';
+                if (entry.source === 'GPS') sourceClass = 'source-gps';
+                else if (entry.source === 'Supervisor') sourceClass = 'source-supervisor';
+
+                html += `<div class="timeline-entry">
+                    <span class="time-stamp">${timeStr}</span>
+                    <span class="source-badge ${sourceClass}">${entry.source}</span>
+                    <span class="location-text">${entry.location}</span>`;
+                if (entry.discrepancy_flag) {
+                    html += `<span class="discrepancy-icon">⚠️</span>`;
+                }
+                html += `<span class="note-text">${entry.note || ''}</span>
+                </div>`;
+            }
+            html += '</div>';
+
+            container.innerHTML = html;
         }
 
         function formatMoney(amount) {

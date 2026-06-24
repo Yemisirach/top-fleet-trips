@@ -7,6 +7,7 @@ from app.core.database import get_session
 from app.services.fleet_odoo_service import get_fleet_trips, get_fleet_trip_by_id
 from app.repositories.memory import repo
 from app.models.trip import TripCreate, TripUpdate, ExpenseLine
+from app.mock_data import mock_db
 
 router = APIRouter()
 
@@ -49,6 +50,15 @@ async def get_trip(trip_id: int, db: AsyncSession = Depends(get_session)) -> dic
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
     return _trip_to_dict(trip)
+
+
+@router.get("/{trip_id}/timeline")
+async def get_trip_timeline(trip_id: int) -> dict:
+    """Get timeline entries for a specific trip (demo mode via mock_db)."""
+    timeline = mock_db.get_trip_timeline(trip_id)
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="Trip timeline not found")
+    return {"trip_id": trip_id, "timeline": timeline}
 
 
 @router.post("")

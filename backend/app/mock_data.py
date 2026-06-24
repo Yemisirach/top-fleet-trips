@@ -6,7 +6,7 @@ from typing import Optional
 import random
 import json
 
-# -----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Data classes
 # ------------------------------------------------------------------------------
 
@@ -44,6 +44,14 @@ class MockFinancialTemplate:
     total_revenue: float
 
 @dataclass
+class MockTimelineEntry:
+    timestamp: datetime
+    location: str
+    source: str  # 'GPS' | 'Odoo' | 'Supervisor'
+    discrepancy_flag: bool = False
+    note: str = ''
+
+@dataclass
 class MockTrip:
     id: int
     name: str
@@ -65,39 +73,62 @@ class MockTrip:
     write_date: datetime
     total_expense: float
     total_revenue: float
+    timeline: list[MockTimelineEntry] = field(default_factory=list)
 
 
-# -----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Seeding helpers
 # ------------------------------------------------------------------------------
 
 ETHIOPIAN_NAMES = [
-    "Abebe Bekele", "Kebede Tadesse", "Dawit Mengistu", "Solomon Girma",
-    "Bereket Haile", "Tesfaye Alemu", "Mulugeta Seyoum", "Yonas Demeke",
-    "Fikadu Tesfaye", "Henok Abebe", "Mekonen Tadesse", "Girma Belay",
-    "Chilot Adane", "Kassa Tsegaye", "Wondimu Jember", "Zerihun Mesfin",
-    "Amanuel Tewolde", "Biniam Abera", "Dagmawi Asefa", "Eyob Tilahun",
-    "Feysel Megersa", "Gedion Asfaw", "Habtamu Desalegn", "Israel Bekele",
-    "Jemal Tadesse", "Kaleab Seyoum", "Lema Abebe", "Menelik Teshome",
-    "Nebiyu Girma", "Ousmane Keita"
+    "Abebe Bekele",
+    "Kebede Tadesse",
+    "Dawit Mengistu",
+    "Solomon Girma",
+    "Bereket Haile",
+    "Tesfaye Alemu",
+    "Mulugeta Seyoum",
+    "Yonas Demeke",
+    "Fikadu Tesfaye",
+    "Henok Abebe",
+    "Mekonen Tadesse",
+    "Girma Belay",
+    "Chilot Adane",
+    "Kassa Tsegaye",
+    "Wondimu Jember",
+    "Zerihun Mesfin",
+    "Amanuel Tewolde",
+    "Biniam Abera",
+    "Dagmawi Asefa",
+    "Eyob Tilahun",
+    "Feysel Megersa",
+    "Gedion Asfaw",
+    "Habtamu Desalegn",
+    "Israel Bekele",
+    "Jemal Tadesse",
+    "Kaleab Seyoum",
+    "Lema Abebe",
+    "Menelik Teshome",
+    "Nebiyu Girma",
+    "Ousmane Keita",
 ]
 
 CITIES = [
-    ("Addis Ababa", "origin"),
-    ("Dire Dawa", "origin"),
-    ("Bahir Dar", "origin"),
-    ("Mekelle", "origin"),
-    ("Hawassa", "origin"),
-    ("Adama", "origin"),
-    ("Jimma", "origin"),
-    ("Arba Minch", "origin"),
-    ("Jijiga", "origin"),
-    ("Nekemte", "origin"),
-    ("Djibouti City", "international"),
-    ("Nairobi", "international"),
-    ("Mombasa", "international"),
-    ("Khartoum", "international"),
-    ("Kampala", "international"),
+    "Addis Ababa",
+    "Dire Dawa",
+    "Bahir Dar",
+    "Mekelle",
+    "Hawassa",
+    "Adama",
+    "Jimma",
+    "Arba Minch",
+    "Jijiga",
+    "Nekemte",
+    "Djibouti City",
+    "Nairobi",
+    "Mombasa",
+    "Khartoum",
+    "Kampala",
 ]
 
 BRANDS = ["Isuzu", "Shacman", "Toyota", "SINO", "Peugeot", "Ford", "Mercedes", "Volvo"]
@@ -137,8 +168,8 @@ class MockDatabase:
 
     def _seed_locations(self):
         self.locations = [
-            MockLocation(id=i + 100, name=name, location_type=lt)
-            for i, (name, lt) in enumerate(CITIES)
+            MockLocation(id=i + 100, name=name)
+            for i, name in enumerate(CITIES)
         ]
 
     def _seed_drivers(self):
@@ -157,16 +188,18 @@ class MockDatabase:
         for i in range(50):
             brand = random.choice(BRANDS)
             model = random.choice(MODELS[brand])
-            self.vehicles.append(MockVehicle(
-                id=10000 + i,
-                license_plate=f"{random.randint(10000, 99999)}-{random.randint(10000, 99999)}",
-                model=model,
-                brand=brand,
-                fuel_type=random.choice(FUEL_TYPES),
-                driver_id=random.choice(self.drivers).id if random.random() > 0.3 else None,
-                state_id=None,
-                active=True,
-            ))
+            self.vehicles.append(
+                MockVehicle(
+                    id=10000 + i,
+                    license_plate=f"{random.randint(10000, 99999)}-{random.randint(10000, 99999)}",
+                    model=model,
+                    brand=brand,
+                    fuel_type=random.choice(FUEL_TYPES),
+                    driver_id=random.choice(self.drivers).id if random.random() > 0.3 else None,
+                    state_id=None,
+                    active=True,
+                )
+            )
 
     def _seed_financial_templates(self):
         self.financial_templates = [
@@ -181,25 +214,22 @@ class MockDatabase:
         self.trips = []
         now = datetime(2026, 6, 24)
         for i in range(120):
-            state = random.choices(
-                TRIP_STATES,
-                weights=[15, 20, 25, 25, 15]
-            )[0]
+            state = random.choices(TRIP_STATES, weights=[15, 20, 25, 25, 15])[0]
             dep_loc = random.choice(self.locations)
             dest_loc = random.choice([l for l in self.locations if l.id != dep_loc.id])
             vehicle = random.choice(self.vehicles)
             driver = random.choice(self.drivers)
             financial = random.choice(self.financial_templates)
             dep_date = now + timedelta(days=random.randint(-30, 30))
-            
+
             if state in ("dispatched", "done"):
                 arr_date = dep_date + timedelta(days=random.randint(1, 5))
             else:
                 arr_date = None
 
-            self.trips.append(MockTrip(
+            trip = MockTrip(
                 id=100000 + i,
-                name=f" route-{dep_loc.name[:3].upper()}-{dest_loc.name[:3].upper()}-{i+1}",
+                name=f" route-{dep_loc.name[:3].upper()}-{dest_loc.name[:3].upper()}-{i + 1}",
                 driver_id=driver.id,
                 departure_id=dep_loc.id,
                 destination_id=dest_loc.id,
@@ -218,11 +248,95 @@ class MockDatabase:
                 write_date=now,
                 total_expense=random.randint(15000, 120000),
                 total_revenue=random.randint(25000, 180000),
-            ))
+            )
 
-    # -------------------------------------------------------------------------
+            # Generate timeline for this trip
+            trip.timeline = self._generate_mock_timeline(trip, dep_loc.name, dest_loc.name)
+
+            self.trips.append(trip)
+
+    def _generate_mock_timeline(self, trip: MockTrip, from_city: str, to_city: str) -> list[MockTimelineEntry]:
+        """Generate realistic timeline entries for a trip."""
+        timeline: list[MockTimelineEntry] = []
+        now = datetime(2026, 6, 24)
+
+        # Odoo: departure
+        timeline.append(
+            MockTimelineEntry(
+                timestamp=datetime.combine(trip.departure_date, datetime.min.time()).replace(hour=8 + random.randint(0, 2)),
+                location=from_city,
+                source="Odoo",
+                discrepancy_flag=False,
+                note="Trip departed from origin",
+            )
+        )
+
+        # For dispatched/done trips, generate intermediate waypoints
+        if trip.state in ("dispatched", "done"):
+            # GPS waypoints (2-4 legs)
+            num_gps_legs = random.randint(2, 4)
+            for j in range(num_gps_legs):
+                # Random time offset during the trip
+                hour_offset = random.randint(2, 18)
+                trip_days = 0
+                if trip.arrival_date:
+                    trip_days = max(0, (trip.arrival_date - trip.departure_date).days)
+                day_offset = random.randint(0, trip_days)
+                
+                
+                gps_time = datetime.combine(trip.departure_date, datetime.min.time()).replace(hour=8) + timedelta(days=day_offset, hours=hour_offset)
+                
+                # Determine location based on progress
+                if j < num_gps_legs - 1:
+                    location = random.choice([from_city, to_city, "Checkpoint"])
+                else:
+                    location = to_city
+
+                # 30% chance of GPS discrepancy
+                discrepancy = random.random() < 0.3
+                note = "GPS tracking active" if not discrepancy else "GPS vs Odoo discrepancy detected"
+
+                timeline.append(
+                    MockTimelineEntry(
+                        timestamp=gps_time,
+                        location=location,
+                        source="GPS",
+                        discrepancy_flag=discrepancy,
+                        note=note,
+                    )
+                )
+
+            # Odoo: arrival (for done trips)
+            if trip.state == "done" and trip.arrival_date:
+                timeline.append(
+                    MockTimelineEntry(
+                        timestamp=datetime.combine(trip.arrival_date, datetime.min.time()).replace(hour=16 + random.randint(0, 4)),
+                        location=to_city,
+                        source="Odoo",
+                        discrepancy_flag=False,
+                        note="Trip arrived at destination",
+                    )
+                )
+
+        # ECSupervisor check-in (random)
+        if random.random() < 0.4:
+            timeline.append(
+                MockTimelineEntry(
+                    timestamp=datetime.combine(trip.departure_date, datetime.min.time()).replace(hour=14),
+                    location=to_city if random.random() > 0.5 else from_city,
+                    source="Supervisor",
+                    discrepancy_flag=False,
+                    note="Supervisor check-in",
+                )
+            )
+
+        # Sort by timestamp
+        timeline.sort(key=lambda x: x.timestamp)
+        return timeline
+
+    # -----------------------------------------------------------------------
     # Query methods
-    # -------------------------------------------------------------------------
+    # -----------------------------------------------------------------------
 
     def get_summary(self) -> dict:
         return {
@@ -294,6 +408,22 @@ class MockDatabase:
             "total_expense": t.total_expense,
             "total_revenue": t.total_revenue,
         }
+
+    def get_trip_timeline(self, trip_id: int) -> Optional[list[dict]]:
+        """Return timeline entries for a specific trip."""
+        t = next((trip for trip in self.trips if trip.id == trip_id), None)
+        if not t:
+            return None
+        return [
+            {
+                "timestamp": entry.timestamp.isoformat(),
+                "location": entry.location,
+                "source": entry.source,
+                "discrepancy_flag": entry.discrepancy_flag,
+                "note": entry.note,
+            }
+            for entry in t.timeline
+        ]
 
     def get_trip_state_counts(self) -> dict:
         return dict(self._get_trips_by_state_counts())
