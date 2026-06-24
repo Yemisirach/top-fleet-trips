@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fleet Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+            padding: 20px 40px;
+            border-bottom: 1px solid #334155;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(90deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .header p { color: #94a3b8; margin-top: 5px; }
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 6px 12px;
+            cursor: pointer;
+        }
+        .mode-toggle label { cursor: pointer; font-size: 14px; color: #94a3b8; }
+        .mode-toggle select {
+            background: #0f172a;
+            color: #e2e8f0;
+            border: 1px solid #334155;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 30px 40px; }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 24px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .stat-card:hover { transform: translateY(-4px); border-color: #60a5fa; }
+        .stat-card .icon { font-size: 32px; margin-bottom: 12px; }
+        .stat-card .value {
+            font-size: 36px;
+            font-weight: 800;
+            background: linear-gradient(90deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .stat-card .label { color: #94a3b8; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+        .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        .card {
+            background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 24px;
+        }
+        .card h2 { font-size: 18px; margin-bottom: 16px; color: #e2e8f0; }
+        .brand-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #334155;
+        }
+        .brand-item:last-child { border-bottom: none; }
+        .brand-bar {
+            flex: 1;
+            height: 8px;
+            background: #334155;
+            border-radius: 4px;
+            margin: 0 16px;
+            overflow: hidden;
+        }
+        .brand-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            background: linear-gradient(90deg, #60a5fa, #a78bfa);
+        }
+        .trip-state-pie { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+        .pie-segment {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .pie-draft { background: #451a03; color: #fbbf24; }
+        .pie-available { background: #1e3a5f; color: #60a5fa; }
+        .pie-assigned { background: #064e3b; color: #34d399; }
+        .pie-dispatched { background: #4c1d95; color: #a78bfa; }
+        .pie-done { background: #1e293b; color: #94a3b8; }
+        .vehicles-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .vehicles-table th, .vehicles-table td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid #334155;
+        }
+        .vehicles-table th {
+            color: #94a3b8;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 12px;
+            letter-spacing: 1px;
+        }
+        .vehicles-table tr:hover { background: #1e293b; }
+        .status { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .status-active { background: #064e3b; color: #34d399; }
+        .status-inactive { background: #451a03; color: #fbbf24; }
+        .loading { text-align: center; padding: 40px; color: #94a3b8; }
+        .error { background: #450a0a; color: #fca5a5; padding: 16px; border-radius: 8px; margin: 20px 0; }
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .revenue-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 12px;
+        }
+        .revenue-card .amount {
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .revenue-card .amount.revenue { color: #34d399; }
+        .revenue-card .amount.expense { color: #f87171; }
+        @media (max-width: 768px) {
+            .grid-2 { grid-template-columns: 1fr; }
+            .container { padding: 20px; }
+            .header { flex-direction: column; gap: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>🚛 Fleet Dashboard</h1>
+            <p>Real-time fleet operations overview</p>
+        </div>
+        <div class="mode-toggle">
+            <label for="mode">Mode:</label>
+            <select id="mode" onchange="changeMode()">
+                <option value="demo" selected>🎮 Demo (Fast)</option>
+                <option value="live">🌐 Live (Real Data)</option>
+            </select>
+        </div>
+    </div>
+    <div class="container">
+        <div id="loading" class="loading">Loading fleet data...</div>
+        <div id="content" style="display:none;">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="icon">🚛</div>
+                    <div id="total-vehicles" class="value">-</div>
+                    <div class="label">Total Vehicles</div>
+                </div>
+                <div class="stat-card">
+                    <div class="icon">🗺️</div>
+                    <div id="total-trips" class="value">-</div>
+                    <div class="label">Total Trips</div>
+                </div>
+                <div class="stat-card">
+                    <div class="icon">👤</div>
+                    <div id="total-drivers" class="value">-</div>
+                    <div class="label">Active Drivers</div>
+                </div>
+                <div class="stat-card">
+                    <div class="icon">🚦</div>
+                    <div id="active-trips" class="value">-</div>
+                    <div class="label">Active Trips</div>
+                </div>
+                <div class="stat-card">
+                    <div class="icon">💰</div>
+                    <div id="total-revenue" class="value">-</div>
+                    <div class="label">Total Revenue</div>
+                </div>
+                <div class="stat-card">
+                    <div class="icon">📊</div>
+                    <div id="total-expense" class="value">-</div>
+                    <div class="label">Total Expense</div>
+                </div>
+            </div>
+            <div class="stats-row">
+                <div class="revenue-card">
+                    <span>Total Revenue</span>
+                    <span id="revenue-amount" class="amount revenue">-</span>
+                </div>
+                <div class="revenue-card">
+                    <span>Total Expense</span>
+                    <span id="expense-amount" class="amount expense">-</span>
+                </div>
+                <div class="revenue-card">
+                    <span>Net Profit</span>
+                    <span id="profit-amount" class="amount revenue">-</span>
+                </div>
+            </div>
+            <div class="grid-2">
+                <div class="card">
+                    <h2>Vehicles by Brand</h2>
+                    <div id="brand-list"></div>
+                </div>
+                <div class="card">
+                    <h2>Trips by State</h2>
+                    <div id="trip-states-list"></div>
+                </div>
+            </div>
+            <div class="card" style="margin-top: 20px;">
+                <h2>Recent Trips</h2>
+                <table class="vehicles-table">
+                    <thead>
+                        <tr><th>ID</th><th>Name</th><th>From</th><th>To</th><th>State</th><th>Date</th><th>Revenue</th></tr>
+                    </thead>
+                    <tbody id="trips-body"></tbody>
+                </table>
+            </div>
+        </div>
+        <div id="error" class="error" style="display:none;"></div>
+    </div>
+    <script>
+        let currentMode = 'demo';
+
+        function changeMode() {
+            currentMode = document.getElementById('mode').value;
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('content').style.display = 'none';
+            loadData();
+        }
+
+        async function loadData() {
+            try {
+                const startTime = performance.now();
+
+                // Single endpoint — fast in demo mode
+                const res = await fetch(`/api/dashboard/full?mode=${currentMode}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+                const data = await res.json();
+
+                const endTime = performance.now();
+                console.log(`Dashboard loaded in ${(endTime - startTime).toFixed(0)}ms (${currentMode} mode)`);
+
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+
+                // Summary cards
+                const s = data.summary || {};
+                document.getElementById('total-vehicles').textContent = s.total_vehicles || 0;
+                document.getElementById('total-trips').textContent = s.total_trips || 0;
+                document.getElementById('total-drivers').textContent = s.total_drivers || 0;
+                document.getElementById('active-trips').textContent = data.active_trip_count || 0;
+                document.getElementById('total-revenue').textContent = formatMoney(data.total_revenue || 0);
+                document.getElementById('total-expense').textContent = formatMoney(data.total_expense || 0);
+
+                // Revenue / Expense / Profit
+                const rev = data.total_revenue || 0;
+                const exp = data.total_expense || 0;
+                document.getElementById('revenue-amount').textContent = formatMoney(rev);
+                document.getElementById('expense-amount').textContent = formatMoney(exp);
+                document.getElementById('profit-amount').textContent = formatMoney(rev - exp);
+
+                // Brand chart
+                const brands = data.vehicles_by_brand || [];
+                const maxCount = Math.max(...brands.map(b => b.count), 1);
+                const brandList = document.getElementById('brand-list');
+                brandList.innerHTML = brands.map(b => `
+                    <div class="brand-item">
+                        <span>${b.brand}</span>
+                        <div class="brand-bar"><div class="brand-bar-fill" style="width:${(b.count / maxCount * 100).toFixed(0)}%"></div></div>
+                        <span style="font-weight:600;min-width:30px;text-align:right">${b.count}</span>
+                    </div>
+                `).join('');
+
+                // Trip states
+                const states = data.trips_by_state || [];
+                const statesList = document.getElementById('trip-states-list');
+                statesList.innerHTML = '<div class="trip-state-pie">' + states.map(s => {
+                    const cls = 'pie-' + s.state;
+                    return `<div class="pie-segment ${cls}">${s.state}: ${s.count}</div>`;
+                }).join('') + '</div>';
+
+                // Recent trips table
+                const recentTrips = data.recent_trips || [];
+                const tbody = document.getElementById('trips-body');
+                tbody.innerHTML = recentTrips.map(t => `
+                    <tr>
+                        <td>${t.id}</td>
+                        <td>${t.name || '-'}</td>
+                        <td>${t.from_city || '-'}</td>
+                        <td>${t.to_city || '-'}</td>
+                        <td><span class="status ${t.state === 'done' ? 'status-inactive' : 'status-active'}">${t.state}</span></td>
+                        <td>${t.departure_date || '-'}</td>
+                        <td style="text-align:right">${formatMoney(t.total_revenue || 0)}</td>
+                    </tr>
+                `).join('');
+
+            } catch (err) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'Error loading data: ' + err.message;
+                console.error(err);
+            }
+        }
+
+        function formatMoney(amount) {
+            return 'ETB ' + Number(amount).toLocaleString('en-US', { maximumFractionDigits: 0 });
+        }
+
+        // Load on startup
+        loadData();
+
+        // Auto-refresh every 30s
+        setInterval(loadData, 30000);
+    </script>
+</body>
+</html>

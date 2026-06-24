@@ -1,8 +1,22 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
+import os
 
 from app.routers import catalog, dashboard, health, integrations, reports, trips, vehicles
 
 app = FastAPI(title="Fleet Trips API", version="0.1.0")
+
+# Serve static files
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    dashboard_path = os.path.join(static_dir, "dashboard.html")
+    with open(dashboard_path, "r") as f:
+        return f.read()
 
 app.include_router(health.router)
 app.include_router(trips.router, prefix="/api/trips", tags=["trips"])

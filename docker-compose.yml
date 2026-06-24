@@ -1,37 +1,68 @@
 services:
   fleet-api:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://testbed_user:testbed%40321@100.121.12.65:5432/Testbed
-      - ODOO_DATABASE_URL=postgresql://testbed_user:testbed%40321@100.121.12.65:5432/Testbed
       - REDIS_URL=redis://redis:6379/0
     ports:
       - "8004:8004"
     depends_on:
       - redis
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8004
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
+    restart: unless-stopped
 
   snapshot-worker:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://testbed_user:testbed%40321@100.121.12.65:5432/Testbed
       - REDIS_URL=redis://redis:6379/0
+    command: >
+      sh -c "while true; do python workers/snapshot_builder.py || true; sleep 60; done"
     depends_on:
       - redis
-    command: python -c "print('snapshot worker running')"
+      - fleet-api
+    restart: unless-stopped
+
+  gps-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    command: >
+      sh -c "while true; do python workers/mayet_scraper.py || true; sleep 30; done"
+    depends_on:
+      - redis
+      - fleet-api
+    restart: unless-stopped
+
+  sync-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    command: >
+      sh -c "while true; do python workers/sync.py || true; sleep 120; done"
+    depends_on:
+      - redis
+      - fleet-api
+    restart: unless-stopped
 
 volumes:
   redis_data:

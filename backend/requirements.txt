@@ -5,3 +5,5 @@ sqlalchemy[asyncio]
 asyncpg
 psycopg[binary]
 python-dotenv
+redis
+httpx

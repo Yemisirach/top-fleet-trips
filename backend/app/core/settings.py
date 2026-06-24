@@ -10,12 +10,12 @@ class Settings(BaseModel):
     # Primary app DB (for fleet-trips app state)
     database_url: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+asyncpg://testbed_user:testbed@321@100.121.12.65:5432/Testbed",
+        "postgresql+asyncpg://testbed_user:testbed%40321@100.121.12.65:5432/Testbed",
     )
     # Odoo read replica / source DB
     odoo_database_url: str = os.getenv(
         "ODOO_DATABASE_URL",
-        "postgresql://testbed_user:testbed@321@100.121.12.65:5432/Testbed",
+        "postgresql://testbed_user:testbed%40321@100.121.12.65:5432/Testbed",
     )
 
 

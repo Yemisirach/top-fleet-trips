@@ -5,11 +5,15 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY main.py ./main.py
+COPY backend/app ./app
+COPY backend/main.py ./main.py
+
+# Workers live alongside the backend app
+COPY workers /app/workers
+RUN touch /app/workers/__init__.py
 
 EXPOSE 8004
 
