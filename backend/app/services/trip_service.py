@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.models.trip import ExpenseLine, Trip, TripCreate, TripState, TripTimelineEntry, TripUpdate, VehicleSupervisor
 from app.services.catalog_service import seed_catalog_data
 from app.repositories.memory import repo
