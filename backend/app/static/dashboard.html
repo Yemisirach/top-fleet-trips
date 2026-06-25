@@ -563,22 +563,40 @@
                         </div>
                     </div>
 
+                    <!-- Trip Legs -->
+                    <div class="trip-legs" style="margin-bottom: 10px;">
+                        <div class="info-row" style="font-weight: 600; margin-bottom: 8px; color: #93c5fd;">
+                            🗺️ Trip Legs (${(j.trips || []).length})
+                        </div>
+                        ${(j.trips || []).map(t => `
+                            <div class="trip-leg-item" style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-bottom: 4px; background: rgba(30, 41, 59, 0.6); border-radius: 6px; font-size: 13px;">
+                                <span style="color: #34d399;">●</span>
+                                <span style="flex: 1;">${t.origin} <span style="color: #64748b;">→</span> ${t.destination}</span>
+                                <span style="color: #94a3b8; font-size: 12px;">${t.distance_km}km</span>
+                            </div>
+                        `).join('')}
+                    </div>
+
                     <!-- Visual Timeline Strip -->
                     <div class="timeline-strip">
-                        <div class="timeline-node">
-                            <div class="dot start"></div>
-                            <div class="label">Topwater</div>
-                        </div>
-                        <div class="timeline-connector"></div>
-                        <div class="timeline-node">
-                            <div class="dot dest"></div>
-                            <div class="label">${destShort}</div>
-                        </div>
-                        <div class="timeline-connector"></div>
-                        <div class="timeline-node">
-                            <div class="dot return"></div>
-                            <div class="label">Topwater</div>
-                        </div>
+                        ${(() => {
+                            let html = '';
+                            (j.trips || []).forEach((trip, idx) => {
+                                const isReturn = trip.destination === 'Topwater Ethiopia HQ, Addis Ababa';
+                                const isStart = trip.origin === 'Topwater Ethiopia HQ, Addis Ababa';
+                                let dotClass = isStart ? 'start' : (isReturn ? 'return' : 'dest');
+                                html += `
+                                    <div class="timeline-node">
+                                        <div class="dot ${dotClass}"></div>
+                                        <div class="label">${isReturn ? 'Topwater' : trip.destination.split(' ')[0]}</div>
+                                    </div>
+                                `;
+                                if (idx < (j.trips || []).length - 1) {
+                                    html += '<div class="timeline-connector"></div>';
+                                }
+                            });
+                            return html;
+                        })()}
                     </div>
 
                     <!-- Financial Summary -->

@@ -4,11 +4,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Optional
 import random
-import json
 
-# ------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Data classes
-# ------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 @dataclass
 class MockDriver:
@@ -18,12 +17,14 @@ class MockDriver:
     license_no: str
     active: bool = True
 
+
 @dataclass
 class MockLocation:
     id: int
     name: str
     location_type: str = "city"
     active: bool = True
+
 
 @dataclass
 class MockVehicle:
@@ -36,6 +37,7 @@ class MockVehicle:
     state_id: Optional[int]
     active: bool = True
 
+
 @dataclass
 class MockTimelineEntry:
     timestamp: datetime
@@ -44,32 +46,58 @@ class MockTimelineEntry:
     discrepancy_flag: bool
     note: str
 
+
+@dataclass
+class MockTrip:
+    """A single leg within a journey (e.g. Topwater -> Dire Dawa)."""
+    id: int
+    origin: str
+    destination: str
+    distance_km: int
+    departure_date: date
+    arrival_date: Optional[date]
+    status: str  # planned, in_progress, completed, cancelled
+    revenue: float
+    expense: float
+    timeline: list[MockTimelineEntry] = field(default_factory=list)
+
+
 @dataclass
 class MockJourney:
+    """A full journey: Topwater -> destination(s) -> Topwater. Contains multiple trips."""
     id: int
     vehicle_id: int
     driver_id: int
-    origin: str
-    destinations: list[str]
     departure_date: date
     return_date: Optional[date]
     status: str  # planned, in_progress, completed, cancelled
     total_revenue: float
     total_expense: float
-    fuel_cost: float
-    driver_allowance: float
-    tolls: float
-    maintenance: float
-    other_expense: float
     cargo_type: str
     cargo_weight_kg: float
-    distance_km: int
-    timeline: list[MockTimelineEntry] = field(default_factory=list)
+    trips: list[MockTrip] = field(default_factory=list)
+    fuel_cost: float = 0.0
+    driver_allowance: float = 0.0
+    tolls: float = 0.0
+    maintenance: float = 0.0
+    other_expense: float = 0.0
+
+    @property
+    def origin(self) -> str:
+        return BASE_LOCATION
+
+    @property
+    def destinations(self) -> list[str]:
+        return [trip.destination for trip in self.trips if trip.destination != BASE_LOCATION]
+
+    @property
+    def total_distance(self) -> int:
+        return sum(trip.distance_km for trip in self.trips)
 
 
-# ------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Seeding helpers
-# ------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 ETHIOPIAN_NAMES = [
     "Abebe Bekele", "Kebede Tadesse", "Dawit Mengistu", "Solomon Girma",
@@ -105,7 +133,6 @@ FUEL_TYPES = ["diesel", "gasoline", "electric"]
 CARGO_TYPES = ["Mineral Water", "Construction Materials", "Food Products", "Textiles", "Machinery", "Fuel", "Consumer Goods"]
 STATUS_CHOICES = ["planned", "in_progress", "completed", "cancelled"]
 
-# Base location
 BASE_LOCATION = "Topwater Ethiopia HQ, Addis Ababa"
 
 
@@ -162,168 +189,124 @@ class MockDatabase:
             )
 
     def _seed_journeys(self):
-        """Generate realistic round-trip journeys from Topwater base."""
+        """Generate realistic journeys with multiple trips from Topwater base."""
         self.journeys = []
         now = datetime(2026, 6, 24)
+
         for i in range(120):
             vehicle = random.choice(self.vehicles)
             driver = random.choice(self.drivers)
-            dest = random.choice(DESTINATIONS)
             cargo = random.choice(CARGO_TYPES)
             cargo_weight = random.randint(500, 20000)
-            distance = random.randint(200, 1800)
             
-            # Calculate dates: round trip takes 1-7 days typically
+            # Journey starts from Topwater
             dep_date = now + timedelta(days=random.randint(-90, 30))
-            trip_duration = random.randint(1, max(1, distance // 300))
-            ret_date = dep_date + timedelta(days=trip_duration)
+            # Journeys have 2-3 trips (outbound + return, or more)
+            num_trips = random.choices([2, 3], weights=[70, 30])[0]
+
+            trips: list[MockTrip] = []
+            current_date = dep_date.date()
+            remaining_destinations = DESTINATIONS.copy()
+            random.shuffle(remaining_destinations)
+            used_destinations = []
+
+            for t_idx in range(num_trips):
+                if t_idx == num_trips - 1:
+                    # Last leg always returns to base
+                    dest = BASE_LOCATION
+                else:
+                    # Pick a destination from the list
+                    dest = remaining_destinations.pop()
+                
+                # Distance and time for this leg
+                distance = random.randint(100, 1500)
+                trip_duration = random.randint(1, max(1, distance // 300))
+                current_date_obj = current_date
+                arr_date = current_date + timedelta(days=trip_duration)
+                
+                # Revenue/Expense for this leg
+                base_rate = random.uniform(15, 35)
+                revenue = distance * base_rate + (cargo_weight / 1000) * random.uniform(50, 150)
+                fuel_cost = distance * random.uniform(1.5, 3.0)
+                driver_allowance = trip_duration * random.uniform(500, 1500)
+                tolls = random.uniform(0, 5000) if distance > 500 else 0
+                maintenance = random.uniform(500, 3000)
+                other = random.uniform(200, 2000)
+                total_expense_leg = fuel_cost + driver_allowance + tolls + maintenance + other
+                
+                status_weights = [15, 35, 40, 5]
+                status = random.choices(STATUS_CHOICES, weights=status_weights)[0]
+
+                trip = MockTrip(
+                    id=300000 + i * 10 + t_idx,
+                    origin="",  # Set below
+                    destination=dest,
+                    distance_km=distance,
+                    departure_date=current_date,
+                    arrival_date=arr_date if status in ["completed", "in_progress"] else None,
+                    status=status,
+                    revenue=round(revenue, 2),
+                    expense=round(total_expense_leg, 2),
+                )
+                # Fix origin: use the previous destination, or BASE_LOCATION for the first leg
+                if t_idx == 0:
+                    trip.origin = BASE_LOCATION
+                else:
+                    trip.origin = trips[-1].destination
+                
+                trips.append(trip)
+                current_date = arr_date + timedelta(days=random.randint(0, 2))
             
-            status_weights = [15, 35, 40, 5]
-            status = random.choices(STATUS_CHOICES, weights=status_weights)[0]
+            # Calculate journey totals
+            total_revenue = sum(trip.revenue for trip in trips)
+            total_expense = sum(trip.expense for trip in trips)
+            total_fuel = sum(t.distance_km * random.uniform(1.5, 3.0) for t in trips)  # Approximate
+            total_allowance = sum(random.uniform(500, 1500) for _ in trips)
             
-            # Revenue based on distance and cargo
-            base_rate = random.uniform(15, 35)  # per km
-            revenue = distance * base_rate + (cargo_weight / 1000) * random.uniform(50, 150)
-            
-            # Expenses
-            fuel_cost = distance * random.uniform(1.5, 3.0)  # birr per km
-            driver_allowance = trip_duration * random.uniform(500, 1500)
-            tolls = random.uniform(0, 5000) if distance > 500 else 0
-            maintenance = random.uniform(500, 3000)
-            other = random.uniform(200, 2000)
-            total_expense = fuel_cost + driver_allowance + tolls + maintenance + other
-            
-            journey = MockJourney(
+            # status is based on the last trip
+            final_status = trips[-1].status if trips else "planned"
+
+            j = MockJourney(
                 id=200000 + i,
                 vehicle_id=vehicle.id,
                 driver_id=driver.id,
-                origin=BASE_LOCATION,
-                destinations=[dest],
                 departure_date=dep_date.date(),
-                return_date=ret_date.date() if status == "completed" else (ret_date.date() if status == "in_progress" and random.random() > 0.5 else None),
-                status=status,
-                total_revenue=round(revenue, 2),
+                return_date=current_date,
+                status=final_status,
+                total_revenue=round(total_revenue, 2),
                 total_expense=round(total_expense, 2),
-                fuel_cost=round(fuel_cost, 2),
-                driver_allowance=round(driver_allowance, 2),
-                tolls=round(tolls, 2),
-                maintenance=round(maintenance, 2),
-                other_expense=round(other, 2),
                 cargo_type=cargo,
                 cargo_weight_kg=cargo_weight,
-                distance_km=distance,
+                trips=trips,
+                fuel_cost=round(total_fuel, 2),
+                driver_allowance=round(total_allowance, 2),
+                tolls=round(sum(t.expense * 0.12 for t in trips), 2),
+                maintenance=round(sum(t.expense * 0.08 for t in trips), 2),
+                other_expense=round(sum(t.expense * 0.1 for t in trips), 2),
             )
-            
-            # Generate timeline for this journey
-            journey.timeline = self._generate_journey_timeline(journey, dest)
-            self.journeys.append(journey)
-        
+            self.journeys.append(j)
+
         # Sort by departure date descending
         self.journeys.sort(key=lambda j: j.departure_date, reverse=True)
 
-    def _generate_journey_timeline(self, journey: MockJourney, dest: str) -> list[MockTimelineEntry]:
-        """Generate realistic timeline for a round-trip journey."""
-        timeline: list[MockTimelineEntry] = []
-        
-        # 1. Departure from Topwater base
-        timeline.append(
-            MockTimelineEntry(
-                timestamp=datetime.combine(journey.departure_date, datetime.min.time()).replace(hour=6 + random.randint(0, 2)),
-                location=BASE_LOCATION,
-                source="Odoo",
-                discrepancy_flag=False,
-                note="Journey departed from Topwater Ethiopia HQ",
-            )
-        )
-        
-        # 2. GPS waypoints during outbound journey
-        if journey.status in ("in_progress", "completed"):
-            num_waypoints = random.randint(2, 4)
-            for j in range(num_waypoints):
-                hour_offset = random.randint(3, 18)
-                day_offset = random.randint(0, max(0, ((journey.return_date or journey.departure_date) - journey.departure_date).days)) if journey.return_date else 0
-                waypoint_time = datetime.combine(journey.departure_date, datetime.min.time()).replace(hour=6) + timedelta(days=day_offset, hours=hour_offset)
-                
-                # Progress-based location
-                if j < num_waypoints - 1:
-                    location = random.choice(["Checkpoint", "Rest Stop", " Fuel Station", "Highway Marker"])
-                else:
-                    location = dest
-                
-                discrepancy = random.random() < 0.25
-                
-                timeline.append(
-                    MockTimelineEntry(
-                        timestamp=waypoint_time,
-                        location=location,
-                        source="GPS",
-                        discrepancy_flag=discrepancy,
-                        note="GPS tracking active" if not discrepancy else "GPS vs Odoo discrepancy detected",
-                    )
-                )
-            
-            # 3. Arrival at destination
-            if journey.status in ("in_progress", "completed"):
-                timeline.append(
-                    MockTimelineEntry(
-                        timestamp=datetime.combine(journey.departure_date, datetime.min.time()).replace(hour=14 + random.randint(0, 4)) + timedelta(days=max(0, ((journey.return_date or journey.departure_date) - journey.departure_date).days // 2)),
-                        location=dest,
-                        source="Odoo",
-                        discrepancy_flag=False,
-                        note="Arrived at destination - unloading cargo",
-                    )
-                )
-            
-            # 4. Supervisor check-in at destination
-            if random.random() < 0.4:
-                timeline.append(
-                    MockTimelineEntry(
-                        timestamp=datetime.combine(journey.departure_date, datetime.min.time()).replace(hour=16) + timedelta(days=max(0, ((journey.return_date or journey.departure_date) - journey.departure_date).days // 2)),
-                        location=dest,
-                        source="Supervisor",
-                        discrepancy_flag=False,
-                        note="Supervisor verification at destination",
-                    )
-                )
-            
-            # 5. Return journey GPS waypoints
-            if journey.status == "completed" and journey.return_date:
-                num_return_wp = random.randint(1, 3)
-                for j in range(num_return_wp):
-                    hour_offset = random.randint(4, 16)
-                    return_start = journey.return_date or journey.departure_date
-                    waypoint_time = datetime.combine(return_start, datetime.min.time()).replace(hour=6) + timedelta(hours=hour_offset)
-                    location = random.choice(["Checkpoint", "Rest Stop", "Fuel Station"])
-                    discrepancy = random.random() < 0.25
-                    
-                    timeline.append(
-                        MockTimelineEntry(
-                            timestamp=waypoint_time,
-                            location=location,
-                            source="GPS",
-                            discrepancy_flag=discrepancy,
-                            note="Return journey GPS tracking",
-                        )
-                    )
-                
-                # 6. Return to Topwater base
-                timeline.append(
-                    MockTimelineEntry(
-                        timestamp=datetime.combine(journey.return_date, datetime.min.time()).replace(hour=14 + random.randint(0, 4)),
-                        location=BASE_LOCATION,
-                        source="Odoo",
-                        discrepancy_flag=False,
-                        note="Returned to Topwater Ethiopia HQ - journey complete",
-                    )
-                )
-        
-        # Sort by timestamp
-        timeline.sort(key=lambda x: x.timestamp)
-        return timeline
+#     def _generate_trip_timeline(self, trip: MockTrip) -> list[MockTimelineEntry]:
+#         """Generate timeline for a single trip leg."""
+#         timeline: list[MockTimelineEntry] = []
+#         timeline.append(
+#             MockTimelineEntry(
+#                 timestamp=datetime.combine(trip.departure_date, datetime.min.time()).replace(hour=6 + random.randint(0, 2)),
+#                 location=trip.origin,
+#                 source="Odoo",
+#                 discrepancy_flag=False,
+#                 note=f"Departed from {trip.origin}",
+#             )
+#         )
+#         # ... (add more timeline entries as needed)
+#         return timeline
 
-    # ---------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
     # Query methods
-    # ---------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
 
     def get_summary(self) -> dict:
         return {
@@ -345,28 +328,25 @@ class MockDatabase:
             counts[j.status] = counts.get(j.status, 0) + 1
         return sorted([{"status": k, "count": v} for k, v in counts.items()], key=lambda x: x["count"], reverse=True)
 
-    def get_recent_journeys(self, limit: int = 10) -> list[dict]:
-        sorted_journeys = sorted(self.journeys, key=lambda j: j.departure_date, reverse=True)
-        return [self._journey_to_dict(j) for j in sorted_journeys[:limit]]
-
-    def get_all_vehicles(self) -> list[dict]:
-        return [
-            {
-                "id": v.id,
-                "license_plate": v.license_plate,
-                "model": v.model,
-                "brand": v.brand,
-                "fuel_type": v.fuel_type,
-                "driver_name": next((d.name for d in self.drivers if d.id == v.driver_id), None) if v.driver_id else None,
-                "active": v.active,
-            }
-            for v in self.vehicles
-        ]
-
     def _journey_to_dict(self, j: MockJourney) -> dict:
         vehicle = next((v for v in self.vehicles if v.id == j.vehicle_id), None)
         driver = next((d for d in self.drivers if d.id == j.driver_id), None)
         profit = j.total_revenue - j.total_expense
+
+        trips_data = []
+        for trip in j.trips:
+            trips_data.append({
+                "id": trip.id,
+                "origin": trip.origin,
+                "destination": trip.destination,
+                "distance_km": trip.distance_km,
+                "departure_date": str(trip.departure_date),
+                "arrival_date": str(trip.arrival_date) if trip.arrival_date else None,
+                "status": trip.status,
+                "revenue": trip.revenue,
+                "expense": trip.expense,
+            })
+
         return {
             "id": j.id,
             "vehicle_plate": vehicle.license_plate if vehicle else "Unknown",
@@ -388,29 +368,32 @@ class MockDatabase:
             "other_expense": j.other_expense,
             "cargo_type": j.cargo_type,
             "cargo_weight_kg": j.cargo_weight_kg,
-            "distance_km": j.distance_km,
+            "trips": trips_data,
         }
+
+    def get_recent_journeys(self, limit: int = 10) -> list[dict]:
+        sorted_journeys = sorted(self.journeys, key=lambda j: j.departure_date, reverse=True)
+        return [self._journey_to_dict(j) for j in sorted_journeys[:limit]]
+
+    def get_all_vehicles(self) -> list[dict]:
+        return [
+            {
+                "id": v.id,
+                "license_plate": v.license_plate,
+                "model": v.model,
+                "brand": v.brand,
+                "fuel_type": v.fuel_type,
+                "driver_name": next((d.name for d in self.drivers if d.id == v.driver_id), None) if v.driver_id else None,
+                "active": v.active,
+            }
+            for v in self.vehicles
+        ]
 
     def get_journey_detail(self, journey_id: int) -> Optional[dict]:
         journey = next((j for j in self.journeys if j.id == journey_id), None)
         if not journey:
             return None
         return self._journey_to_dict(journey)
-
-    def get_journey_timeline(self, journey_id: int) -> Optional[list[dict]]:
-        journey = next((j for j in self.journeys if j.id == journey_id), None)
-        if not journey:
-            return None
-        return [
-            {
-                "timestamp": entry.timestamp.isoformat(),
-                "location": entry.location,
-                "source": entry.source,
-                "discrepancy_flag": entry.discrepancy_flag,
-                "note": entry.note,
-            }
-            for entry in journey.timeline
-        ]
 
     def get_full_dashboard(self) -> dict:
         """Return everything the dashboard needs in one call."""
@@ -423,8 +406,8 @@ class MockDatabase:
             "journeys_by_status": self.get_journeys_by_status(),
             "recent_journeys": self.get_recent_journeys(20),
             "active_journey_count": active_count,
-            "total_revenue": total_revenue,
-            "total_expense": total_expense,
+            "total_revenue": round(total_revenue, 2),
+            "total_expense": round(total_expense, 2),
             "total_profit": round(total_revenue - total_expense, 2),
             "base_location": BASE_LOCATION,
         }
