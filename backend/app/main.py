@@ -18,6 +18,12 @@ async def root():
     with open(dashboard_path, "r") as f:
         return f.read()
 
+@app.get("/map.html", response_class=HTMLResponse)
+async def map_page():
+    map_path = os.path.join(static_dir, "map.html")
+    with open(map_path, "r") as f:
+        return f.read()
+
 app.include_router(health.router)
 app.include_router(trips.router, prefix="/api/trips", tags=["trips"])
 app.include_router(vehicles.router, prefix="/api/vehicles", tags=["vehicles"])

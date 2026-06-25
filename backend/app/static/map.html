@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Journey Route Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+        .header { background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%); padding: 20px 40px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 24px; font-weight: 700; }
+        .header a { color: #60a5fa; text-decoration: none; font-size: 14px; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 30px 40px; display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        @media (max-width: 768px) { .container { grid-template-columns: 1fr; padding: 15px; } }
+        .panel { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; }
+        .panel h2 { font-size: 18px; margin-bottom: 16px; color: #e2e8f0; }
+        .route-stop { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #334155; }
+        .route-stop:last-child { border-bottom: none; }
+        .stop-dot { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
+        .stop-dot.start { background: #34d399; }
+        .stop-dot.mid { background: #fbbf24; }
+        .stop-dot.end { background: #f87171; }
+        .stop-info { flex: 1; }
+        .stop-name { font-weight: 600; }
+        .stop-meta { font-size: 13px; color: #94a3b8; }
+        #map { height: 600px; border-radius: 12px; border: 1px solid #334155; }
+        .loading { text-align: center; padding: 40px; color: #94a3b8; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🗺️ Journey Route</h1>
+        <a href="/">← Back to Dashboard</a>
+    </div>
+    <div class="container">
+        <div class="panel" id="route-panel">
+            <div class="loading">Loading journey...</div>
+        </div>
+        <div id="map"></div>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const journeyId = urlParams.get('journey_id');
+        const API_BASE = '/api';
+
+        // Approximate coordinates for demo cities ( lat, lon )
+        const cityCoords = {
+            "Topwater Ethiopia HQ, Addis Ababa": [9.0054, 38.7636],
+            "Dire Dawa": [9.6076, 41.8667],
+            "Bahir Dar": [11.5926, 37.3840],
+            "Mekelle": [13.5034, 39.4753],
+            "Hawassa": [7.0621, 38.4764],
+            "Adama": [8.5411, 39.2682],
+            "Jimma": [7.6805, 36.8324],
+            "Arba Minch": [6.0389, 37.5509],
+            "Jijiga": [9.3588, 42.7879],
+            "Nekemte": [9.0908, 36.5475],
+            "Djibouti City": [11.5721, 43.1456],
+            "Nairobi": [-1.2921, 36.8219],
+            "Mombasa": [-4.0435, 39.6682],
+            "Khartoum": [15.5007, 32.5599],
+            "Kampala": [0.3136, 32.5818],
+            "Moyale": [3.5223, 39.0611],
+            "Gondar": [12.6030, 37.4521],
+            "Axum": [14.1326, 38.7199],
+            "Lalibela": [12.0355, 39.0463],
+            "Harar": [9.3139, 42.1241],
+            "Sodo": [6.8602, 37.7618],
+        };
+
+        async function loadJourney() {
+            if (!journeyId) return showError("No journey ID provided");
+            try {
+                const res = await fetch(`${API_BASE}/journeys/${journeyId}`);
+                if (!res.ok) throw new Error(await res.text());
+                const j = await res.json();
+                renderRoute(j);
+                renderMap(j);
+            } catch (e) {
+                showError("Failed to load journey: " + e.message);
+            }
+        }
+
+        function renderRoute(j) {
+            const panel = document.getElementById('route-panel');
+            const stops = [];
+            if (j.trips && j.trips.length > 0) {
+                j.trips.forEach((trip, idx) => {
+                    stops.push({
+                        name: trip.origin,
+                        date: trip.departure_date,
+                        type: 'start'
+                    });
+                    if (idx === j.trips.length - 1) {
+                        stops.push({
+                            name: trip.destination,
+                            date: trip.arrival_date || 'Pending',
+                            type: 'end'
+                        });
+                    }
+                });
+            } else {
+                stops.push({ name: j.origin, date: j.departure_date, type: 'start' });
+                stops.push({ name: j.destinations?.[0] ?? 'Unknown', date: j.return_date, type: 'end' });
+            }
+
+            panel.innerHTML = `
+                <h2>📋 Route Details</h2>
+                <div class="info-row" style="margin-bottom: 15px;">
+                    <span style="color:#94a3b8;">Vehicle:</span> <strong>${j.vehicle_plate}</strong> | Driver: ${j.driver_name}
+                </div>
+                ${stops.map((s, i) => `
+                    <div class="route-stop">
+                        <div class="stop-dot ${s.type}"></div>
+                        <div class="stop-info">
+                            <div class="stop-name">${s.name}</div>
+                            <div class="stop-meta">${s.date || 'Pending'}</div>
+                        </div>
+                    </div>
+                `).join('')}
+                <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #334155;">
+                    <div style="display: flex; justify-content: space-between; font-size: 14px;">
+                        <span style="color:#94a3b8;">Revenue:</span> <span style="color:#34d399;">${formatMoney(j.total_revenue)}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 14px; margin-top: 5px;">
+                        <span style="color:#94a3b8;">Expense:</span> <span style="color:#f87171;">${formatMoney(j.total_expense)}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderMap(j) {
+            const map = L.map('map').setView([9.0, 38.76], 6);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+
+            const points = [];
+            if (j.trips && j.trips.length > 0) {
+                j.trips.forEach(trip => {
+                    const o = cityCoords[trip.origin] || [9 + Math.random() - 0.5, 38 + Math.random() - 0.5];
+                    const d = cityCoords[trip.destination] || [9 + Math.random() - 0.5, 38 + Math.random() - 0.5];
+                    if (trip.origin === BASE) points.push(o);
+                    L.marker(o).addTo(map).bindPopup(`<b>${trip.origin}</b><br>Start: ${trip.departure_date}`);
+                    if (trip.destination !== BASE) {
+                        L.marker(d).addTo(map).bindPopup(`<b>${trip.destination}</b><br>End: ${trip.arrival_date || 'Pending'}`);
+                    }
+                    const latlngs = [o, d];
+                    L.polyline(latlngs, { color: '#60a5fa', weight: 3 }).addTo(map);
+                });
+            }
+
+            if (points.length > 0) {
+                const bounds = L.latLngBounds(points);
+                map.fitBounds(bounds, { padding: [50, 50] });
+            }
+        }
+
+        function formatMoney(amount) {
+            return new Intl.NumberFormat('en-ET', { style: 'currency', currency: 'ETB', minimumFractionDigits: 2 }).format(amount || 0);
+        }
+
+        function showError(msg) {
+            document.getElementById('route-panel').innerHTML = `<div class="loading" style="color:#f87171;">${msg}</div>`;
+        }
+
+        const BASE = 'Topwater Ethiopia HQ, Addis Ababa';
+        loadJourney();
+    </script>
+</body>
+</html>

@@ -98,11 +98,14 @@ async def get_full_dashboard(
 ) -> dict:
     """Return full dashboard data in a single call. Fast in demo mode."""
 
-    if mode == "demo":
-        return mock_db.get_full_dashboard()
+    if mode == "live":
+        try:
+            return await _get_live_dashboard(db)
+        except Exception as e:
+            # If live DB fails, fall back to demo data
+            return {**mock_db.get_full_dashboard(), "_warning": f"Live DB unavailable ({str(e)[:80]}), showing demo data."}
 
-    # Live mode: real DB queries (slower but actual data)
-    return await _get_live_dashboard(db)
+    return mock_db.get_full_dashboard()
 
 
 async def _get_live_dashboard(db: AsyncSession) -> dict:
