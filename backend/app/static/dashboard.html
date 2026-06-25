@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fleet Dashboard — Timeline Tracking</title>
+    <title>Fleet Dashboard — Trip Cards</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -50,6 +50,63 @@
             cursor: pointer;
         }
         .container { max-width: 1400px; margin: 0 auto; padding: 30px 40px; }
+        
+        /* Filter Bar */
+        .filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 30px;
+            align-items: end;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex: 1;
+            min-width: 180px;
+        }
+        .filter-group label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #94a3b8;
+            font-weight: 600;
+        }
+        .filter-group input {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #e2e8f0;
+            font-size: 14px;
+            outline: none;
+        }
+        .filter-group input:focus {
+            border-color: #60a5fa;
+        }
+        .filter-btn {
+            background: linear-gradient(90deg, #60a5fa, #a78bfa);
+            border: none;
+            border-radius: 8px;
+            padding: 10px 24px;
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 14px;
+            transition: opacity 0.2s;
+        }
+        .filter-btn:hover { opacity: 0.9; }
+        .filter-btn.reset {
+            background: #334155;
+            color: #e2e8f0;
+        }
+
+        /* Stats */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -75,142 +132,174 @@
             background-clip: text;
         }
         .stat-card .label { color: #94a3b8; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
-        .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
-        .card {
+
+        /* Cards Grid */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 24px;
+            margin-top: 24px;
+        }
+        .trip-card {
             background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
             border: 1px solid #334155;
             border-radius: 16px;
-            padding: 24px;
-        }
-        .card h2 { font-size: 18px; margin-bottom: 16px; color: #e2e8f0; }
-        .brand-item {
+            padding: 20px;
+            transition: transform 0.2s, border-color 0.2s;
             display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #334155;
+            flex-direction: column;
+            gap: 14px;
         }
-        .brand-item:last-child { border-bottom: none; }
-        .brand-bar {
-            flex: 1;
-            height: 8px;
-            background: #334155;
-            border-radius: 4px;
-            margin: 0 16px;
-            overflow: hidden;
-        }
-        .brand-bar-fill {
-            height: 100%;
-            border-radius: 4px;
-            background: linear-gradient(90deg, #60a5fa, #a78bfa);
-        }
-        .trip-state-pie { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
-        .pie-segment {
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        .pie-draft { background: #451a03; color: #fbbf24; }
-        .pie-available { background: #1e3a5f; color: #60a5fa; }
-        .pie-assigned { background: #064e3b; color: #34d399; }
-        .pie-dispatched { background: #4c1d95; color: #a78bfa; }
-        .pie-done { background: #1e293b; color: #94a3b8; }
-        .vehicles-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .vehicles-table th, .vehicles-table td {
-            text-align: left;
-            padding: 12px;
-            border-bottom: 1px solid #334155;
-        }
-        .vehicles-table th {
-            color: #94a3b8;
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 12px;
-            letter-spacing: 1px;
-        }
-        .vehicles-table tr:hover { background: #1e293b; }
-        .status { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-        .status-active { background: #064e3b; color: #34d399; }
-        .status-inactive { background: #451a03; color: #fbbf24; }
-        .loading { text-align: center; padding: 40px; color: #94a3b8; }
-        .error { background: #450a0a; color: #fca5a5; padding: 16px; border-radius: 8px; margin: 20px 0; }
-        .stats-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        .revenue-card {
+        .trip-card:hover { transform: translateY(-4px); border-color: #60a5fa; }
+        .trip-card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 16px;
-            background: #0f172a;
-            border: 1px solid #334155;
-            border-radius: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #334155;
         }
-        .revenue-card .amount {
-            font-size: 24px;
+        .trip-card-plate {
+            font-size: 18px;
             font-weight: 700;
-        }
-        .revenue-card .amount.revenue { color: #34d399; }
-        .revenue-card .amount.expense { color: #f87171; }
-        /* ===== Timeline styles ===== */
-        .trip-expandable {
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .trip-expandable:hover {
-            background: #1e293b;
-        }
-        .trip-expandable td:first-child::before {
-            content: '▶';
-            display: inline-block;
-            margin-right: 8px;
-            font-size: 12px;
-            transition: transform 0.2s;
             color: #60a5fa;
         }
-        .trip-expandable.expanded td:first-child::before {
-            transform: rotate(90deg);
+        .trip-card-status {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
         }
-        .timeline-row {
-            background: #0b1120;
+        .status-planned { background: #451a03; color: #fbbf24; }
+        .status-in_progress { background: #1e3a5f; color: #60a5fa; }
+        .status-completed { background: #064e3b; color: #34d399; }
+        .status-cancelled { background: #450a0a; color: #fca5a5; }
+        
+        .trip-card-info {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
-        .timeline-card {
-            padding: 20px 40px;
-            border-bottom: 1px dashed #334155;
-        }
-        .timeline-card:last-child {
-            border-bottom: none;
-        }
-        .timeline-header {
+        .info-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 16px;
         }
-        .timeline-header h3 {
+        .info-label { color: #94a3b8; font-size: 13px; }
+        .info-value { font-weight: 600; font-size: 14px; }
+        
+        /* Timeline Strip */
+        .timeline-strip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            background: rgba(60, 150, 250, 0.08);
+            border: 1px solid rgba(60, 150, 250, 0.2);
+            border-radius: 10px;
+            margin-top: 4px;
+        }
+        .timeline-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            min-width: 80px;
+        }
+        .timeline-node .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #60a5fa;
+            border: 2px solid #1e3a5f;
+        }
+        .timeline-node .dot.start { background: #34d399; }
+        .timeline-node .dot.dest { background: #fbbf24; }
+        .timeline-node .dot.return { background: #34d399; }
+        .timeline-node .label {
+            font-size: 10px;
+            color: #94a3b8;
+            white-space: nowrap;
+            max-width: 100px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .timeline-connector {
+            flex: 1;
+            height: 2px;
+            background: linear-gradient(90deg, #60a5fa, #a78bfa);
+            border-radius: 1px;
+            min-width: 20px;
+        }
+        
+        /* Financial Summary */
+        .financial-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #334155;
+        }
+        .financial-item {
+            text-align: center;
+        }
+        .financial-item .amount {
             font-size: 15px;
+            font-weight: 700;
+        }
+        .financial-item .amount.revenue { color: #34d399; }
+        .financial-item .amount.expense { color: #f87171; }
+        .financial-item .amount.profit { color: #60a5fa; }
+        .financial-item .ftype { font-size: 11px; color: #94a3b8; }
+        
+        /* Toggle Button */
+        .toggle-timeline {
+            background: transparent;
+            border: 1px solid #334155;
+            color: #94a3b8;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            text-align: center;
+            margin-top: 4px;
+        }
+        .toggle-timeline:hover { border-color: #60a5fa; color: #60a5fa; }
+
+        /* Timeline Expansion */
+        .timeline-panel {
+            display: none;
+            border-top: 1px dashed #334155;
+            padding-top: 14px;
+            margin-top: 6px;
+        }
+        .timeline-card-inner {
+            padding: 16px;
+            background: #0b1120;
+            border-radius: 10px;
+        }
+        .timeline-card-inner h3 {
+            font-size: 14px;
+            margin-bottom: 12px;
             color: #e2e8f0;
         }
         .journey-stitch {
             display: flex;
             align-items: center;
             gap: 12px;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
             padding: 12px 16px;
             background: rgba(60, 150, 250, 0.1);
             border: 1px solid rgba(60, 150, 250, 0.3);
             border-radius: 8px;
+            overflow-x: auto;
         }
         .journey-stitch span {
             font-weight: 600;
             color: #60a5fa;
+            font-size: 13px;
+            white-space: nowrap;
         }
         .journey-stitch .connector {
             font-size: 18px;
@@ -230,10 +319,14 @@
             background: #1e293b;
             transition: background 0.2s;
         }
-        .timeline-entry:hover {
-            background: #2a3548;
+        .timeline-entry:hover { background: #2a3548; }
+        .timeline-entry .time-stamp {
+            font-family: 'SF Mono', monospace;
+            font-size: 12px;
+            color: #94a3b8;
+            min-width: 160px;
         }
-        .timeline-entry .source-badge {
+        .source-badge {
             display: inline-flex;
             align-items: center;
             justify-content: center;
@@ -247,33 +340,18 @@
         .source-gps { background: #451a03; color: #fbbf24; }
         .source-odoo { background: #1e3a5f; color: #60a5fa; }
         .source-supervisor { background: #064e3b; color: #34d399; }
-        .timeline-entry .time-stamp {
-            font-family: 'SF Mono', monospace;
-            font-size: 12px;
-            color: #94a3b8;
-            min-width: 160px;
-        }
-        .timeline-entry .location-text {
-            font-weight: 600;
-            flex: 1;
-        }
-        .timeline-entry .discrepancy-icon {
-            color: #f87171;
-            font-weight: 700;
-            font-size: 13px;
-            margin-left: 8px;
-        }
-        .timeline-entry .note-text {
-            font-size: 11px;
-            color: #6b7280;
-            flex: 1;
-            text-align: right;
-        }
+        .location-text { font-weight: 600; flex: 1; font-size: 13px; }
+        .note-text { font-size: 11px; color: #6b7280; flex: 1; text-align: right; }
+        .discrepancy-icon { color: #f87171; font-weight: 700; font-size: 13px; }
+        
+        .loading { text-align: center; padding: 40px; color: #94a3b8; }
+        .error { background: #450a0a; color: #fca5a5; padding: 16px; border-radius: 8px; margin: 20px 0; }
+        
         @media (max-width: 768px) {
-            .grid-2 { grid-template-columns: 1fr; }
             .container { padding: 20px; }
             .header { flex-direction: column; gap: 16px; }
-            .timeline-card { padding: 16px; }
+            .cards-grid { grid-template-columns: 1fr; }
+            .filter-bar { flex-direction: column; align-items: stretch; }
         }
     </style>
 </head>
@@ -326,44 +404,40 @@
                     <div class="label">Total Expense</div>
                 </div>
             </div>
-            <div class="stats-row">
-                <div class="revenue-card">
-                    <span>Total Revenue</span>
-                    <span id="revenue-amount" class="amount revenue">-</span>
+
+            <!-- Filter Bar -->
+            <div class="filter-bar">
+                <div class="filter-group">
+                    <label for="filter-plate">Vehicle Plate</label>
+                    <input type="text" id="filter-plate" placeholder="e.g. TOP-1234-AB" oninput="applyFilters()">
                 </div>
-                <div class="revenue-card">
-                    <span>Total Expense</span>
-                    <span id="expense-amount" class="amount expense">-</span>
+                <div class="filter-group">
+                    <label for="filter-driver">Driver Name</label>
+                    <input type="text" id="filter-driver" placeholder="e.g. Abebe Bekele" oninput="applyFilters()">
                 </div>
-                <div class="revenue-card">
-                    <span>Net Profit</span>
-                    <span id="profit-amount" class="amount revenue">-</span>
+                <div class="filter-group">
+                    <label for="filter-from">From Date</label>
+                    <input type="date" id="filter-from" onchange="applyFilters()">
+                </div>
+                <div class="filter-group">
+                    <label for="filter-to">To Date</label>
+                    <input type="date" id="filter-to" onchange="applyFilters()">
+                </div>
+                <div class="filter-group" style="flex:0;">
+                    <button class="filter-btn reset" onclick="resetFilters()">Reset</button>
                 </div>
             </div>
-            <div class="grid-2">
-                <div class="card">
-                    <h2>Vehicles by Brand</h2>
-                    <div id="brand-list"></div>
-                </div>
-                <div class="card">
-                    <h2>Trips by State</h2>
-                    <div id="trip-states-list"></div>
-                </div>
-            </div>
-            <div class="card" style="margin-top: 20px;">
-                <h2>Recent Trips — Click to View Timeline</h2>
-                <table class="vehicles-table">
-                    <thead>
-                        <tr><th>ID</th><th>Name</th><th>From</th><th>To</th><th>State</th><th>Date</th><th>Revenue</th></tr>
-                    </thead>
-                    <tbody id="trips-body"></tbody>
-                </table>
-            </div>
+
+            <!-- Trip Cards Grid -->
+            <h2 style="margin-bottom: 12px;">Recent Trips</h2>
+            <div id="cards-container" class="cards-grid"></div>
+            <div id="no-results" style="display:none; text-align:center; padding:40px; color:#94a3b8;">No trips match your filters.</div>
         </div>
         <div id="error" class="error" style="display:none;"></div>
     </div>
     <script>
         let currentMode = 'demo';
+        let allJourneys = [];
         let expandedTripId = null;
 
         function changeMode() {
@@ -376,7 +450,6 @@
 
         async function loadData() {
             try {
-                const startTime = performance.now();
                 const res = await fetch(`/api/dashboard/full?mode=${currentMode}`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
                 const data = await res.json();
@@ -387,38 +460,14 @@
                 // Summary cards
                 const s = data.summary || {};
                 document.getElementById('total-vehicles').textContent = s.total_vehicles || 0;
-                document.getElementById('total-trips').textContent = s.total_trips || 0;
+                document.getElementById('total-trips').textContent = s.total_journeys || 0;
                 document.getElementById('total-drivers').textContent = s.total_drivers || 0;
-                document.getElementById('active-trips').textContent = data.active_trip_count || 0;
+                document.getElementById('active-trips').textContent = data.active_journey_count || 0;
                 document.getElementById('total-revenue').textContent = formatMoney(data.total_revenue || 0);
                 document.getElementById('total-expense').textContent = formatMoney(data.total_expense || 0);
 
-                // Revenue / Expense / Profit
-                const rev = data.total_revenue || 0;
-                const exp = data.total_expense || 0;
-                document.getElementById('revenue-amount').textContent = formatMoney(rev);
-                document.getElementById('expense-amount').textContent = formatMoney(exp);
-                document.getElementById('profit-amount').textContent = formatMoney(rev - exp);
-
-                // Brand chart
-                const brands = data.vehicles_by_brand || [];
-                const maxCount = Math.max(...brands.map(b => b.count), 1);
-                document.getElementById('brand-list').innerHTML = brands.map(b => `
-                    <div class="brand-item">
-                        <span>${b.brand}</span>
-                        <div class="brand-bar"><div class="brand-bar-fill" style="width:${(b.count / maxCount * 100).toFixed(0)}%"></div></div>
-                        <span style="font-weight:600;min-width:30px;text-align:right">${b.count}</span>
-                    </div>
-                `).join('');
-
-                // Trip states
-                const states = data.trips_by_state || [];
-                document.getElementById('trip-states-list').innerHTML = '<div class="trip-state-pie">' + states.map(s => {
-                    const cls = 'pie-' + s.state;
-                    return `<div class="pie-segment ${cls}">${s.state}: ${s.count}</div>`;
-                }).join('') + '</div>';
-
-                renderTripsTable(data.recent_trips || []);
+                // Fetch all journeys via the new API
+                await fetchJourneys();
             } catch (err) {
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('error').style.display = 'block';
@@ -427,67 +476,162 @@
             }
         }
 
-        function renderTripsTable(trips) {
-            const tbody = document.getElementById('trips-body');
-            let html = '';
-            trips.forEach(t => {
-                html += `<tr class="trip-expandable" data-trip-id="${t.id}" onclick="toggleTripTimeline(${t.id})">
-                    <td>${t.id}</td>
-                    <td>${t.name || '-'}</td>
-                    <td>${t.from_city || '-'}</td>
-                    <td>${t.to_city || '-'}</td>
-                    <td><span class="status ${t.state === 'done' ? 'status-inactive' : 'status-active'}">${t.state}</span></td>
-                    <td>${t.departure_date || '-'}</td>
-                    <td style="text-align:right">${formatMoney(t.total_revenue || 0)}</td>
-                </tr>`;
-                html += `<tr id="timeline-${t.id}" class="timeline-row" style="display:none;">
-                    <td colspan="7">
-                        <div class="timeline-card" id="timeline-content-${t.id}">
-                            <div style="text-align:center; padding: 20px; color: #94a3b8;" class="loading">Loading timeline...</div>
-                        </div>
-                    </td>
-                </tr>`;
+        async function fetchJourneys() {
+            try {
+                const res = await fetch('/api/journeys');
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+                const data = await res.json();
+                allJourneys = data.journeys || [];
+                applyFilters();
+            } catch (err) {
+                console.error('Error fetching journeys:', err);
+            }
+        }
+
+        function applyFilters() {
+            const plate = document.getElementById('filter-plate').value.toLowerCase();
+            const driver = document.getElementById('filter-driver').value.toLowerCase();
+            const fromDateStr = document.getElementById('filter-from').value;
+            const toDateStr = document.getElementById('filter-to').value;
+            const fromDate = fromDateStr ? new Date(fromDateStr) : null;
+            const toDate = toDateStr ? new Date(toDateStr) : null;
+
+            const filtered = allJourneys.filter(j => {
+                const jDate = new Date(j.departure_date);
+                if (plate && !j.vehicle_plate.toLowerCase().includes(plate)) return false;
+                if (driver && !j.driver_name.toLowerCase().includes(driver)) return false;
+                if (fromDate && jDate < fromDate) return false;
+                if (toDate) {
+                    const nextDay = new Date(toDate);
+                    nextDay.setDate(nextDay.getDate() + 1);
+                    if (jDate >= nextDay) return false;
+                }
+                return true;
             });
-            tbody.innerHTML = html;
+
+            renderCards(filtered);
         }
 
-        async function toggleTripTimeline(tripId) {
-            const row = document.querySelector(`.trip-expandable[data-trip-id="${tripId}"]`);
-            const timelineRow = document.getElementById(`timeline-${tripId}`);
-            if (!row || !timelineRow) return;
-
-            // Close any other open timeline
-            if (expandedTripId && expandedTripId !== tripId) {
-                const prevTimeline = document.getElementById(`timeline-${expandedTripId}`);
-                if (prevTimeline) prevTimeline.style.display = 'none';
-                const prevRow = document.querySelector(`.trip-expandable[data-trip-id="${expandedTripId}"]`);
-                if (prevRow) prevRow.classList.remove('expanded');
-            }
-
-            if (timelineRow.style.display === 'none') {
-                timelineRow.style.display = 'table-row';
-                row.classList.add('expanded');
-                expandedTripId = tripId;
-                // Load timeline data
-                loadTimeline(tripId);
-            } else {
-                timelineRow.style.display = 'none';
-                row.classList.remove('expanded');
-                expandedTripId = null;
-            }
+        function resetFilters() {
+            document.getElementById('filter-plate').value = '';
+            document.getElementById('filter-driver').value = '';
+            document.getElementById('filter-from').value = '';
+            document.getElementById('filter-to').value = '';
+            applyFilters();
         }
 
-        async function loadTimeline(tripId) {
-            const container = document.getElementById(`timeline-content-${tripId}`);
-            if (!container) return;
-            container.innerHTML = '<div style="text-align:center; padding: 20px; color: #94a3b8;">Loading timeline...</div>';
+        function renderCards(journeys) {
+            const container = document.getElementById('cards-container');
+            const noResults = document.getElementById('no-results');
+
+            if (journeys.length === 0) {
+                container.innerHTML = '';
+                noResults.style.display = 'block';
+                return;
+            }
+            noResults.style.display = 'none';
+
+            container.innerHTML = journeys.map(j => {
+                const statusClass = j.status ? `status-${j.status}` : 'status-planned';
+                const destinationsText = j.destinations ? j.destinations.join(', ') : 'N/A';
+                const destShort = j.destinations && j.destinations.length > 0 ? j.destinations[0] : 'N/A';
+                const profit = (j.total_revenue || 0) - (j.total_expense || 0);
+                const profitClass = profit >= 0 ? 'revenue' : 'expense';
+
+                return `
+                <div class="trip-card" data-journey-id="${j.id}">
+                    <div class="trip-card-header">
+                        <div class="trip-card-plate">${j.vehicle_plate || 'N/A'}</div>
+                        <div class="trip-card-status ${statusClass}">${j.status || 'N/A'}</div>
+                    </div>
+                    <div class="trip-card-info">
+                        <div class="info-row">
+                            <span class="info-label">👤 Driver</span>
+                            <span class="info-value">${j.driver_name || 'N/A'}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">📍 Origin</span>
+                            <span class="info-value">${j.origin || 'Topwater Ethiopia'}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">🎯 Destination</span>
+                            <span class="info-value">${destinationsText}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">📅 Departure</span>
+                            <span class="info-value">${j.departure_date || 'N/A'}</span>
+                        </div>
+                    </div>
+
+                    <!-- Visual Timeline Strip -->
+                    <div class="timeline-strip">
+                        <div class="timeline-node">
+                            <div class="dot start"></div>
+                            <div class="label">Topwater</div>
+                        </div>
+                        <div class="timeline-connector"></div>
+                        <div class="timeline-node">
+                            <div class="dot dest"></div>
+                            <div class="label">${destShort}</div>
+                        </div>
+                        <div class="timeline-connector"></div>
+                        <div class="timeline-node">
+                            <div class="dot return"></div>
+                            <div class="label">Topwater</div>
+                        </div>
+                    </div>
+
+                    <!-- Financial Summary -->
+                    <div class="financial-row">
+                        <div class="financial-item">
+                            <div class="amount revenue">${formatMoney(j.total_revenue || 0)}</div>
+                            <div class="ftype">Revenue</div>
+                        </div>
+                        <div class="financial-item">
+                            <div class="amount expense">${formatMoney(j.total_expense || 0)}</div>
+                            <div class="ftype">Expense</div>
+                        </div>
+                        <div class="financial-item">
+                            <div class="amount ${profitClass}">${formatMoney(profit)}</div>
+                            <div class="ftype">${profit >= 0 ? 'Profit' : 'Loss'}</div>
+                        </div>
+                    </div>
+
+                    <button class="toggle-timeline" onclick="toggleTimeline(${j.id})">
+                        View Timeline
+                    </button>
+                    <div id="timeline-panel-${j.id}" class="timeline-panel">
+                        <div class="timeline-card-inner" id="timeline-content-${j.id}">
+                            <div style="text-align:center; padding: 20px; color: #94a3b8;">Loading timeline...</div>
+                        </div>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+
+        async function toggleTimeline(tripId) {
+            const panel = document.getElementById(`timeline-panel-${tripId}`);
+            const content = document.getElementById(`timeline-content-${tripId}`);
+            if (!panel || !content) return;
+
+            if (panel.style.display === 'block') {
+                panel.style.display = 'none';
+                return;
+            }
+
+            // Close others
+            document.querySelectorAll('.timeline-panel').forEach(p => p.style.display = 'none');
+            panel.style.display = 'block';
+
+            content.innerHTML = '<div style="text-align:center; padding: 20px; color: #94a3b8;">Loading timeline...</div>';
             try {
                 const res = await fetch(`/api/trips/${tripId}/timeline`);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || 'Timeline not found');
-                renderTimelineContent(container, data.timeline || []);
+                renderTimelineContent(content, data.timeline || []);
             } catch (err) {
-                container.innerHTML = `<div style="text-align:center; padding: 20px; color: #fca5a5;">Error loading timeline: ${err.message}</div>`;
+                content.innerHTML = `<div style="text-align:center; padding: 20px; color: #fca5a5;">Error loading timeline: ${err.message}</div>`;
             }
         }
 
@@ -497,18 +641,15 @@
                 return;
             }
 
-            // Build stitched journey
             const uniqueLocations = [...new Set(entries.map(e => e.location))];
-            const isActiveJourney = true; // For demo purposes
-
-            let html = '<div class="timeline-header"><h3>🛣️ Journey Timeline</h3>';
             const discrepancyCount = entries.filter(e => e.discrepancy_flag).length;
+
+            let html = '<div class="timeline-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;"><h3>🛣️ Journey Timeline</h3>';
             if (discrepancyCount > 0) {
                 html += `<span style="color:#f87171; font-size:12px;">⚠️ ${discrepancyCount} GPS vs Odoo discrepancy${discrepancyCount>1?'s':''}</span>`;
             }
             html += '</div>';
 
-            // Stitched journey path
             html += '<div class="journey-stitch">';
             uniqueLocations.forEach((loc, i) => {
                 html += `<span>${loc}</span>`;
@@ -516,7 +657,6 @@
             });
             html += '</div>';
 
-            // Timeline entries
             html += '<div class="timeline-entries">';
             for (const entry of entries) {
                 const date = new Date(entry.timestamp);
@@ -542,7 +682,8 @@
         }
 
         function formatMoney(amount) {
-            return 'ETB ' + Number(amount).toLocaleString('en-US', { maximumFractionDigits: 0 });
+            const sign = amount < 0 ? '-' : '';
+            return sign + 'ETB ' + Math.abs(Number(amount)).toLocaleString('en-US', { maximumFractionDigits: 0 });
         }
 
         // Load on startup

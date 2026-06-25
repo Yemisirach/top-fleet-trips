@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 import os
 
-from app.routers import catalog, dashboard, health, integrations, reports, trips, vehicles
+from app.routers import catalog, dashboard, health, integrations, reports, trips, vehicles, journeys
 
 app = FastAPI(title="Fleet Trips API", version="0.1.0")
 
@@ -25,3 +25,4 @@ app.include_router(catalog.router, prefix="/api/catalog", tags=["catalog"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
+app.include_router(journeys.router, prefix="/api", tags=["journeys"])
