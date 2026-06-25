@@ -649,7 +649,7 @@
 
             content.innerHTML = '<div style="text-align:center; padding: 20px; color: #94a3b8;">Loading timeline...</div>';
             try {
-                const res = await fetch(`/api/trips/${tripId}/timeline`);
+                const res = await fetch(`/api/journeys/${tripId}/timeline`);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || 'Timeline not found');
                 renderTimelineContent(content, data.timeline || []);
