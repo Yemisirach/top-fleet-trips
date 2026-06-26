@@ -17,6 +17,8 @@ class Settings(BaseModel):
         "ODOO_DATABASE_URL",
         "postgresql://testbed_user:testbed%40321@100.121.12.65:5432/Testbed",
     )
+    db_connect_timeout_seconds: float = float(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "5"))
+    db_query_timeout_seconds: float = float(os.getenv("DB_QUERY_TIMEOUT_SECONDS", "8"))
 
 
 @lru_cache

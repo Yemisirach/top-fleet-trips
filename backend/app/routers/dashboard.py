@@ -1,13 +1,17 @@
 """Dashboard router with real Odoo snapshot data and fast mock-data mode."""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from app.core.database import get_session
+from app.core.settings import get_settings
 from app.mock_data import mock_db, MockDatabase
 
 router = APIRouter()
+settings = get_settings()
 
 
 @router.get("/snapshot")
@@ -39,21 +43,27 @@ async def get_snapshot(db: AsyncSession = Depends(get_session)) -> dict:
     # Recent trips
     recent_trips_result = await db.execute(text("""
         SELECT t.id, t.name, t.state, t.departure_date,
-               v.license_plate, m.name as model
+               v.license_plate, m.name as model, b.name as brand
         FROM trip_trip t
         LEFT JOIN fleet_vehicle v ON t.vehicle_id = v.id
         LEFT JOIN fleet_vehicle_model m ON v.model_id = m.id
+        LEFT JOIN fleet_vehicle_model_brand b ON m.brand_id = b.id
         ORDER BY t.create_date DESC
         LIMIT 10
     """))
-    recent_trips = [
+    recent_journeys = [
         {
             "id": row.id,
-            "name": row.name,
-            "state": row.state,
+            "vehicle_plate": row.license_plate,
+            "vehicle_brand": row.brand or row.model,
+            "driver_name": "Odoo",
+            "origin": "Odoo trip",
+            "destinations": [row.name] if row.name else [],
+            "status": row.state,
             "departure_date": str(row.departure_date) if row.departure_date else None,
-            "license_plate": row.license_plate,
-            "model": row.model,
+            "total_revenue": 0,
+            "total_expense": 0,
+            "trips": [],
         }
         for row in recent_trips_result.fetchall()
     ]
@@ -77,17 +87,24 @@ async def get_snapshot(db: AsyncSession = Depends(get_session)) -> dict:
     # Totals
     total_vehicles = await db.execute(text("SELECT COUNT(*) as count FROM fleet_vehicle WHERE active = true"))
     total_trips = await db.execute(text("SELECT COUNT(*) as count FROM trip_trip"))
+    active_trips = await db.execute(text("SELECT COUNT(*) as count FROM trip_trip WHERE state NOT IN ('done', 'cancel')"))
 
     return {
+        "_mode": "live",
         "summary": {
             "total_vehicles": total_vehicles.fetchone().count,
-            "total_trips": total_trips.fetchone().count,
+            "total_journeys": total_trips.fetchone().count,
+            "total_drivers": 0,
             "total_revenue": total_revenue,
             "total_expense": total_expense,
         },
         "vehicles_by_brand": brands,
-        "trips_by_state": trip_states,
-        "recent_trips": recent_trips,
+        "journeys_by_status": trip_states,
+        "recent_journeys": recent_journeys,
+        "active_journey_count": active_trips.fetchone().count,
+        "total_revenue": total_revenue,
+        "total_expense": total_expense,
+        "total_profit": total_revenue - total_expense,
     }
 
 
@@ -100,12 +117,25 @@ async def get_full_dashboard(
 
     if mode == "live":
         try:
-            return await _get_live_dashboard(db)
+            return await asyncio.wait_for(
+                _get_live_dashboard(db),
+                timeout=settings.db_query_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            return {
+                **mock_db.get_full_dashboard(),
+                "_mode": "demo",
+                "_warning": f"Live DB timed out after {settings.db_query_timeout_seconds:g}s, showing demo data.",
+            }
         except Exception as e:
             # If live DB fails, fall back to demo data
-            return {**mock_db.get_full_dashboard(), "_warning": f"Live DB unavailable ({str(e)[:80]}), showing demo data."}
+            return {
+                **mock_db.get_full_dashboard(),
+                "_mode": "demo",
+                "_warning": f"Live DB unavailable ({str(e)[:80]}), showing demo data.",
+            }
 
-    return mock_db.get_full_dashboard()
+    return {**mock_db.get_full_dashboard(), "_mode": "demo"}
 
 
 async def _get_live_dashboard(db: AsyncSession) -> dict:
@@ -136,21 +166,27 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
     # Recent trips
     recent_trips_result = await db.execute(text("""
         SELECT t.id, t.name, t.state, t.departure_date,
-               v.license_plate, m.name as model
+               v.license_plate, m.name as model, b.name as brand
         FROM trip_trip t
         LEFT JOIN fleet_vehicle v ON t.vehicle_id = v.id
         LEFT JOIN fleet_vehicle_model m ON v.model_id = m.id
+        LEFT JOIN fleet_vehicle_model_brand b ON m.brand_id = b.id
         ORDER BY t.create_date DESC
         LIMIT 10
     """))
-    recent_trips = [
+    recent_journeys = [
         {
             "id": row.id,
-            "name": row.name,
-            "state": row.state,
+            "vehicle_plate": row.license_plate,
+            "vehicle_brand": row.brand or row.model,
+            "driver_name": "Odoo",
+            "origin": "Odoo trip",
+            "destinations": [row.name] if row.name else [],
+            "status": row.state,
             "departure_date": str(row.departure_date) if row.departure_date else None,
-            "license_plate": row.license_plate,
-            "model": row.model,
+            "total_revenue": 0,
+            "total_expense": 0,
+            "trips": [],
         }
         for row in recent_trips_result.fetchall()
     ]
@@ -174,17 +210,24 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
     # Totals
     total_vehicles = await db.execute(text("SELECT COUNT(*) as count FROM fleet_vehicle WHERE active = true"))
     total_trips = await db.execute(text("SELECT COUNT(*) as count FROM trip_trip"))
+    active_trips = await db.execute(text("SELECT COUNT(*) as count FROM trip_trip WHERE state NOT IN ('done', 'cancel')"))
 
     return {
+        "_mode": "live",
         "summary": {
             "total_vehicles": total_vehicles.fetchone().count,
-            "total_trips": total_trips.fetchone().count,
+            "total_journeys": total_trips.fetchone().count,
+            "total_drivers": 0,
             "total_revenue": total_revenue,
             "total_expense": total_expense,
         },
         "vehicles_by_brand": brands,
-        "trips_by_state": trip_states,
-        "recent_trips": recent_trips,
+        "journeys_by_status": trip_states,
+        "recent_journeys": recent_journeys,
+        "active_journey_count": active_trips.fetchone().count,
+        "total_revenue": total_revenue,
+        "total_expense": total_expense,
+        "total_profit": total_revenue - total_expense,
     }
 
 

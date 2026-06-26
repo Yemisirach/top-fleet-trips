@@ -48,7 +48,13 @@
             border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600;
         }
         .mode-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: #34d399; }
+        .mode-badge.demo .dot { background: #fbbf24; }
+        .mode-badge.warning .dot { background: #f87171; }
         .mode-badge .label { color: #94a3b8; }
+        .mode-select {
+            background: #0b1120; border: 1px solid #334155; border-radius: 6px;
+            color: #e2e8f0; font-size: 13px; font-weight: 600; padding: 6px 8px;
+        }
 
         /* Stats */
         .stats-grid {
@@ -58,7 +64,7 @@
         @media (max-width: 768px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } .sidebar { display: none; } .main { margin-left: 0; padding: 20px; } }
         .stat-card {
             background: #131c2e; border: 1px solid #1e293b; border-radius: 12px; padding: 20px;
-            displayenasition: 0.2s;
+            transition: 0.2s;
         }
         .stat-card:hover { border-color: #334155; }
         .stat-label { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
@@ -193,7 +199,11 @@
                 </div>
                 <div class="mode-badge">
                     <span class="dot"></span>
-                    <span class="label">Live (Real Data)</span>
+                    <span class="label" id="mode-label">Live DB</span>
+                    <select class="mode-select" id="mode-select" aria-label="Data source">
+                        <option value="live">Live DB</option>
+                        <option value="demo">Demo DB</option>
+                    </select>
                 </div>
             </div>
 
@@ -242,18 +252,33 @@
         const API_BASE = '/api';
         let allJourneys = [];
         let dashboardData = null;
+        let currentMode = localStorage.getItem('fleetDashboardMode') || 'live';
 
         async function loadDashboard() {
+            const modeSelect = document.getElementById('mode-select');
+            modeSelect.value = currentMode;
+            updateModeBadge(currentMode, 'Loading...');
             try {
-                const res = await fetch(`${API_BASE}/dashboard/full`);
+                const res = await fetch(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(currentMode)}`);
                 const data = await res.json();
                 dashboardData = data;
                 renderStats(data);
                 allJourneys = data.recent_journeys || [];
                 renderCards(allJourneys);
+                updateModeBadge(data._mode || currentMode, data._warning || '');
             } catch (e) {
                 console.error('Failed to load dashboard:', e);
+                updateModeBadge(currentMode, 'Load failed');
             }
+        }
+
+        function updateModeBadge(mode, warning) {
+            const badge = document.querySelector('.mode-badge');
+            const label = document.getElementById('mode-label');
+            badge.classList.toggle('demo', mode === 'demo');
+            badge.classList.toggle('warning', Boolean(warning));
+            label.textContent = warning || (mode === 'demo' ? 'Demo DB' : 'Live DB');
+            label.title = warning || '';
         }
 
         function renderStats(data) {
@@ -272,38 +297,38 @@
 
         document.getElementById('btn-filter').addEventListener('click', applyFilters);
         document.getElementById('btn-reset').addEventListener('click', resetFilters);
+        document.getElementById('mode-select').addEventListener('change', (event) => {
+            currentMode = event.target.value;
+            localStorage.setItem('fleetDashboardMode', currentMode);
+            resetFilters(false);
+            loadDashboard();
+        });
         ['filter-plate', 'filter-driver', 'filter-from', 'filter-to'].forEach(id => {
             document.getElementById(id).addEventListener('input', applyFilters);
         });
 
-        async function applyFilters() {
-            const plate = document.getElementById('filter-plate').value;
-            const driver = document.getElementById('filter-driver').value;
+        function applyFilters() {
+            const plate = document.getElementById('filter-plate').value.toLowerCase();
+            const driver = document.getElementById('filter-driver').value.toLowerCase();
             const fromDate = document.getElementById('filter-from').value;
             const toDate = document.getElementById('filter-to').value;
 
-            const params = new URLSearchParams();
-            if (plate) params.append('plate', plate);
-            if (driver) params.append('driver', driver);
-            if (fromDate) params.append('from_date', fromDate);
-            if (toDate) params.append('to_date', toDate);
-
-            const url = `${API_BASE}/journeys?${params.toString()}`;
-            try {
-                const res = await fetch(url);
-                const data = await res.json();
-                renderCards(data.journeys || []);
-            } catch (e) {
-                console.error('Filter error:', e);
-            }
+            const filtered = allJourneys.filter(j => {
+                const matchesPlate = !plate || (j.vehicle_plate || '').toLowerCase().includes(plate);
+                const matchesDriver = !driver || (j.driver_name || '').toLowerCase().includes(driver);
+                const departure = j.departure_date ? new Date(j.departure_date) : null;
+                const matchesFrom = !fromDate || (departure && departure >= new Date(fromDate));
+                const matchesTo = !toDate || (departure && departure <= new Date(`${toDate}T23:59:59`));
+                return matchesPlate && matchesDriver && matchesFrom && matchesTo;
+            });
+            renderCards(filtered);
         }
 
-        function resetFilters() {
-            document.getElementById('filter-plate').value = '';
-            document.getElementById('filter-driver').value = '';
-            document.getElementById('filter-from').value = '';
-            document.getElementById('filter-to').value = '';
-            renderCards(allJourneys);
+        function resetFilters(render = true) {
+            ['filter-plate', 'filter-driver', 'filter-from', 'filter-to'].forEach(id => {
+                document.getElementById(id).value = '';
+            });
+            if (render) renderCards(allJourneys);
         }
 
         function renderCards(journeys) {
@@ -388,7 +413,8 @@
         async function toggleTimeline(tripId) {
             const panel = document.getElementById(`timeline-panel-${tripId}`);
             const content = document.getElementById(`timeline-content-${tripId}`);
-            if (!panel || !content) return;\n            if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
+            if (!panel || !content) return;
+            if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
             document.querySelectorAll('.timeline-panel').forEach(p => p.style.display = 'none');
             panel.style.display = 'block';
             content.innerHTML = '<div style="text-align:center; padding: 20px; color: #94a3b8;">Loading timeline...</div>';

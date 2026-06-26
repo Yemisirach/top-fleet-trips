@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from sqlalchemy import text
@@ -26,11 +27,20 @@ async def check_odoo_connection(session: AsyncSession) -> OdooConnectionStatus:
         )
 
     try:
-        await session.execute(text("SELECT 1"))
+        await asyncio.wait_for(
+            session.execute(text("SELECT 1")),
+            timeout=settings.db_query_timeout_seconds,
+        )
         return OdooConnectionStatus(
             configured=True,
             reachable=True,
             message="Odoo connection is reachable.",
+        )
+    except asyncio.TimeoutError:
+        return OdooConnectionStatus(
+            configured=True,
+            reachable=False,
+            message=f"Odoo connection timed out after {settings.db_query_timeout_seconds:g}s.",
         )
     except Exception as exc:  # pragma: no cover - surfaced to API
         return OdooConnectionStatus(
