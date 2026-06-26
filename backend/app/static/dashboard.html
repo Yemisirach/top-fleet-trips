@@ -247,6 +247,15 @@
         .telemetry-box { border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: rgba(56, 189, 248, 0.06); }
         .telemetry-label { color: var(--muted); font-size: 11px; }
         .telemetry-value { font-weight: 800; margin-top: 3px; }
+        .card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .card-actions .btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; font-size: 13px; }
+        .timeline-panel { display: none; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; overflow: hidden; }
+        .timeline-panel.open { display: block; }
+        .timeline-entry { display: grid; grid-template-columns: 90px 1fr; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+        .timeline-entry:last-child { border-bottom: 0; }
+        .timeline-time { color: var(--muted); }
+        .timeline-location { font-weight: 800; }
+        .timeline-note { color: var(--muted); margin-top: 2px; }
         .green { color: var(--green); }
         .red { color: var(--red); }
         .blue { color: var(--blue); }
@@ -594,6 +603,8 @@
                 const fuel = 38 + (seed % 47);
                 const telemetryDistance = totalDistance || 420 + (seed % 900);
                 const visibleLegs = legs.length ? legs.slice(0, 3) : [{ origin, destination, distance_km: telemetryDistance, status: state }];
+                const tripId = String(trip.id || '');
+                const timelineId = `timeline-${targetId}-${tripId}`;
                 return `
                     <article class="trip-card">
                         <div class="trip-card-head">
@@ -633,7 +644,90 @@
                             <div class="telemetry-box"><div class="telemetry-label">Fuel</div><div class="telemetry-value">${fuel}%</div></div>
                             <div class="telemetry-box"><div class="telemetry-label">Distance</div><div class="telemetry-value">${telemetryDistance} km</div></div>
                         </div>
+                        <div class="card-actions">
+                            <button class="btn primary" onclick="toggleTimeline(${JSON.stringify(targetId)}, ${JSON.stringify(tripId)})">View Timeline</button>
+                            <a class="btn" href="/map.html?journey_id=${encodeURIComponent(tripId)}" target="_blank">View Map</a>
+                        </div>
+                        <div class="timeline-panel" id="${clean(timelineId)}"></div>
                     </article>
+                `;
+            }).join('');
+        }
+
+        async function toggleTimeline(targetId, tripId) {
+            const panel = $(`timeline-${targetId}-${tripId}`);
+            if (!panel) return;
+            if (panel.classList.contains('open')) {
+                panel.classList.remove('open');
+                return;
+            }
+            document.querySelectorAll('.timeline-panel.open').forEach((item) => item.classList.remove('open'));
+            panel.classList.add('open');
+            panel.innerHTML = '<div class="empty">Loading timeline...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/journeys/${encodeURIComponent(tripId)}/timeline`);
+                if (!response.ok) throw new Error('Timeline unavailable');
+                const data = await response.json();
+                renderTimelinePanel(panel, data.timeline || []);
+            } catch (error) {
+                const trip = allTrips.find((item) => String(item.id) === String(tripId));
+                renderTimelinePanel(panel, buildLocalTimeline(trip));
+            }
+        }
+
+        function buildLocalTimeline(trip) {
+            if (!trip) return [];
+            const legs = Array.isArray(trip.trips) ? trip.trips : [];
+            if (!legs.length) {
+                const destination = Array.isArray(trip.destinations) && trip.destinations.length ? trip.destinations[0] : 'Pending destination';
+                return [{
+                    timestamp: trip.departure_date || '',
+                    location: trip.origin || 'Addis Ababa HQ',
+                    note: `Route opened toward ${destination}`,
+                    source: 'Dashboard',
+                }];
+            }
+
+            return legs.flatMap((leg) => {
+                const entries = [{
+                    timestamp: leg.departure_date || trip.departure_date || '',
+                    location: leg.origin || trip.origin || 'Addis Ababa HQ',
+                    note: `Departed toward ${leg.destination || 'destination'}`,
+                    source: 'Odoo',
+                }];
+                if (leg.arrival_date) {
+                    entries.push({
+                        timestamp: leg.arrival_date,
+                        location: leg.destination || 'Destination',
+                        note: `Arrived after ${leg.distance_km || 0} km`,
+                        source: 'GPS',
+                    });
+                }
+                return entries;
+            });
+        }
+
+        function renderTimelinePanel(panel, entries) {
+            if (!entries.length) {
+                panel.innerHTML = '<div class="empty">No timeline entries.</div>';
+                return;
+            }
+            panel.innerHTML = entries.map((entry) => {
+                const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleString('en-GB', {
+                    month: 'short',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                }) : 'Pending';
+                return `
+                    <div class="timeline-entry">
+                        <div class="timeline-time">${clean(timestamp)}</div>
+                        <div>
+                            <div class="timeline-location">${clean(entry.location || 'Unknown location')}</div>
+                            <div class="timeline-note">${clean(entry.note || entry.source || '')}</div>
+                        </div>
+                    </div>
                 `;
             }).join('');
         }
