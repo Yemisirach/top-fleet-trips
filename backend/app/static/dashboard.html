@@ -175,6 +175,24 @@
         .card-value.red { color: var(--red); }
         .card-value.blue { color: var(--blue); }
         .panel { overflow: hidden; margin-bottom: 20px; }
+        .overview-grid {
+            display: grid;
+            grid-template-columns: 1.25fr 0.9fr;
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .overview-grid .panel { margin-bottom: 0; }
+        .summary-list { display: grid; gap: 10px; padding: 16px; }
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #0b1220;
+            font-size: 13px;
+        }
         .panel-header {
             padding: 14px 16px;
             display: flex;
@@ -240,6 +258,7 @@
         @media (max-width: 1280px) {
             .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
             .trip-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .overview-grid { grid-template-columns: 1fr; }
         }
         @media (max-width: 860px) {
             .sidebar { transform: translateX(-100%); width: 272px; }
@@ -319,6 +338,35 @@
 
             <section class="view active" id="view-dashboard">
                 <div class="grid" id="stats-grid"></div>
+                <div class="overview-grid">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <div class="panel-title">Recent Trips</div>
+                                <div class="panel-subtitle">Latest vehicle and driver activity</div>
+                            </div>
+                        </div>
+                        <div class="table-wrap"><table id="recent-trip-table"></table></div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <div class="panel-title">Financial Summary</div>
+                                <div class="panel-subtitle">Revenue, expense, receivables</div>
+                            </div>
+                        </div>
+                        <div class="summary-list" id="financial-summary"></div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <div class="panel-title">Driver Activity</div>
+                            <div class="panel-subtitle">Trips grouped by assigned driver</div>
+                        </div>
+                    </div>
+                    <div class="table-wrap"><table id="driver-activity-table"></table></div>
+                </div>
                 <div class="panel">
                     <div class="panel-header">
                         <div>
@@ -586,6 +634,50 @@
             renderTripCards('dashboard-active', allTrips.filter((trip) => ['available', 'assigned', 'dispatched'].includes(normalizeState(trip.status))).slice(0, 6));
         }
 
+        function renderDashboardOverview() {
+            const revenue = allTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
+            const expense = allTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
+            const profit = revenue - expense;
+            renderTable('recent-trip-table', ['Vehicle', 'Driver', 'Route', 'State'], allTrips.slice(0, 8).map((trip) => {
+                const destinations = Array.isArray(trip.destinations) ? trip.destinations.join(', ') : 'Pending';
+                return [
+                    trip.vehicle_plate || trip.id,
+                    trip.driver_name || 'Unassigned',
+                    destinations || trip.origin || 'Pending',
+                    stateLabel(trip.status),
+                ];
+            }));
+
+            const driverRows = Object.values(allTrips.reduce((acc, trip) => {
+                const driver = trip.driver_name || 'Unassigned';
+                if (!acc[driver]) acc[driver] = { driver, vehicles: new Set(), trips: 0, dispatched: 0, revenue: 0 };
+                acc[driver].vehicles.add(trip.vehicle_plate || 'N/A');
+                acc[driver].trips += 1;
+                acc[driver].revenue += Number(trip.total_revenue || 0);
+                if (normalizeState(trip.status) === 'dispatched') acc[driver].dispatched += 1;
+                return acc;
+            }, {})).sort((a, b) => b.trips - a.trips).slice(0, 8);
+            renderTable('driver-activity-table', ['Driver', 'Vehicles', 'Trips', 'Dispatched', 'Revenue'], driverRows.map((row) => [
+                row.driver,
+                Array.from(row.vehicles).slice(0, 3).join(', '),
+                row.trips,
+                row.dispatched,
+                money(row.revenue),
+            ]));
+
+            $('financial-summary').innerHTML = [
+                ['Confirmed Receivables', money(revenue), 'green'],
+                ['Approved Expenses', money(expense), 'red'],
+                ['Net Profit', money(profit), profit >= 0 ? 'green' : 'red'],
+                ['Profit Margin', `${revenue ? Math.round((profit / revenue) * 100) : 0}%`, profit >= 0 ? 'green' : 'red'],
+            ].map(([label, value, tone]) => `
+                <div class="summary-row">
+                    <span class="muted">${label}</span>
+                    <strong class="${tone}">${value}</strong>
+                </div>
+            `).join('');
+        }
+
         function renderLocations() {
             const rows = Object.values(allTrips.reduce((acc, trip) => {
                 const location = (trip.destinations && trip.destinations[0]) || trip.current_location || 'Pending';
@@ -667,6 +759,7 @@
         function renderAll() {
             renderStats();
             renderTrips();
+            renderDashboardOverview();
             renderLocations();
             renderPayments();
             renderSupervisors();
