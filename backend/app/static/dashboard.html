@@ -136,9 +136,9 @@
             min-height: 40px;
             padding: 8px 10px;
         }
-        .filter-bar {
+        .search-bar {
             display: grid;
-            grid-template-columns: 1.1fr 1fr 160px 160px auto;
+            grid-template-columns: minmax(220px, 1fr);
             gap: 10px;
             margin-bottom: 20px;
             background: var(--panel);
@@ -270,7 +270,6 @@
             .main, .main.expanded { margin-left: 0; padding: 16px; }
             .topbar { align-items: flex-start; flex-direction: column; }
             .controls { width: 100%; justify-content: flex-start; }
-            .filter-bar { grid-template-columns: 1fr; }
             .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .trip-list { grid-template-columns: 1fr; padding: 12px; }
             .mode-label { max-width: 190px; }
@@ -328,12 +327,8 @@
                 </div>
             </div>
 
-            <section class="filter-bar">
-                <input type="text" id="filter-plate" placeholder="Vehicle plate">
-                <input type="text" id="filter-driver" placeholder="Driver">
-                <input type="date" id="filter-from">
-                <input type="date" id="filter-to">
-                <button class="btn" id="btn-reset">Reset</button>
+            <section class="search-bar">
+                <input type="search" id="global-search" placeholder="Search vehicle, driver, route, state, payment">
             </section>
 
             <section class="view active" id="view-dashboard">
@@ -496,24 +491,40 @@
             return state.replace('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase());
         }
 
-        function getFilteredTrips() {
-            const plate = $('filter-plate').value.trim().toLowerCase();
-            const driver = $('filter-driver').value.trim().toLowerCase();
-            const from = $('filter-from').value;
-            const to = $('filter-to').value;
+        function getSearchMatchedTrips() {
+            const query = $('global-search').value.trim().toLowerCase();
+            if (!query) return allTrips;
 
             return allTrips.filter((trip) => {
+                const destinations = Array.isArray(trip.destinations) ? trip.destinations.join(' ') : '';
+                const legs = Array.isArray(trip.trips)
+                    ? trip.trips.map((leg) => `${leg.origin || ''} ${leg.destination || ''} ${leg.status || ''}`).join(' ')
+                    : '';
+                const haystack = [
+                    trip.id,
+                    trip.vehicle_plate,
+                    trip.vehicle_brand,
+                    trip.driver_name,
+                    trip.origin,
+                    destinations,
+                    stateLabel(trip.status),
+                    trip.status,
+                    trip.total_revenue,
+                    trip.total_expense,
+                    legs,
+                ].join(' ').toLowerCase();
+                return haystack.includes(query);
+            });
+        }
+
+        function getFilteredTrips() {
+            return getSearchMatchedTrips().filter((trip) => {
                 const state = normalizeState(trip.status);
                 const isActive = ['available', 'assigned', 'dispatched'].includes(state);
                 const matchesStatus = statusFilter === 'all'
                     || state === statusFilter
                     || (statusFilter === 'active' && isActive);
-                const matchesPlate = !plate || String(trip.vehicle_plate || '').toLowerCase().includes(plate);
-                const matchesDriver = !driver || String(trip.driver_name || '').toLowerCase().includes(driver);
-                const departure = trip.departure_date ? new Date(trip.departure_date) : null;
-                const matchesFrom = !from || (departure && departure >= new Date(from));
-                const matchesTo = !to || (departure && departure <= new Date(`${to}T23:59:59`));
-                return matchesStatus && matchesPlate && matchesDriver && matchesFrom && matchesTo;
+                return matchesStatus;
             });
         }
 
@@ -631,14 +642,15 @@
             const filtered = getFilteredTrips();
             $('trips-title').textContent = statusFilter === 'active' ? 'Active Trips' : 'Trips';
             renderTripCards('trip-list', filtered);
-            renderTripCards('dashboard-active', allTrips.filter((trip) => ['available', 'assigned', 'dispatched'].includes(normalizeState(trip.status))).slice(0, 6));
+            renderTripCards('dashboard-active', getSearchMatchedTrips().filter((trip) => ['available', 'assigned', 'dispatched'].includes(normalizeState(trip.status))).slice(0, 6));
         }
 
         function renderDashboardOverview() {
-            const revenue = allTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
-            const expense = allTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
+            const searchedTrips = getSearchMatchedTrips();
+            const revenue = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
+            const expense = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
             const profit = revenue - expense;
-            renderTable('recent-trip-table', ['Vehicle', 'Driver', 'Route', 'State'], allTrips.slice(0, 8).map((trip) => {
+            renderTable('recent-trip-table', ['Vehicle', 'Driver', 'Route', 'State'], searchedTrips.slice(0, 8).map((trip) => {
                 const destinations = Array.isArray(trip.destinations) ? trip.destinations.join(', ') : 'Pending';
                 return [
                     trip.vehicle_plate || trip.id,
@@ -648,7 +660,7 @@
                 ];
             }));
 
-            const driverRows = Object.values(allTrips.reduce((acc, trip) => {
+            const driverRows = Object.values(searchedTrips.reduce((acc, trip) => {
                 const driver = trip.driver_name || 'Unassigned';
                 if (!acc[driver]) acc[driver] = { driver, vehicles: new Set(), trips: 0, dispatched: 0, revenue: 0 };
                 acc[driver].vehicles.add(trip.vehicle_plate || 'N/A');
@@ -679,7 +691,7 @@
         }
 
         function renderLocations() {
-            const rows = Object.values(allTrips.reduce((acc, trip) => {
+            const rows = Object.values(getSearchMatchedTrips().reduce((acc, trip) => {
                 const location = (trip.destinations && trip.destinations[0]) || trip.current_location || 'Pending';
                 if (!acc[location]) acc[location] = { location, count: 0, vehicles: new Set(), active: 0 };
                 acc[location].count += 1;
@@ -696,20 +708,21 @@
         }
 
         function renderPayments() {
-            const revenue = allTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
-            const expense = allTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
+            const searchedTrips = getSearchMatchedTrips();
+            const revenue = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
+            const expense = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
             const profit = revenue - expense;
             $('payment-grid').innerHTML = [
                 ['Confirmed Receivables', money(revenue), 'green'],
                 ['Approved Payment Requests', money(expense), 'red'],
                 ['Income Statement Profit', money(profit), profit >= 0 ? 'green' : 'red'],
-                ['Receivable Count', allTrips.length, ''],
-                ['Payment Request Count', allTrips.length, ''],
+                ['Receivable Count', searchedTrips.length, ''],
+                ['Payment Request Count', searchedTrips.length, ''],
                 ['Pending Expense Total', money(expense * 0.18), 'red'],
             ].map(([label, value, tone]) => `
                 <div class="card"><div class="card-label">${label}</div><div class="card-value ${tone}">${value}</div></div>
             `).join('');
-            renderTable('payment-table', ['Trip', 'Customer', 'Receivable', 'Payment Request', 'Profit'], allTrips.map((trip) => [
+            renderTable('payment-table', ['Trip', 'Customer', 'Receivable', 'Payment Request', 'Profit'], searchedTrips.map((trip) => [
                 trip.vehicle_plate || trip.id,
                 trip.driver_name || 'Customer',
                 money(trip.total_revenue),
@@ -719,7 +732,7 @@
         }
 
         function renderSupervisors() {
-            const rows = Object.values(allTrips.reduce((acc, trip) => {
+            const rows = Object.values(getSearchMatchedTrips().reduce((acc, trip) => {
                 const name = trip.driver_name || 'Unassigned supervisor';
                 if (!acc[name]) acc[name] = { name, vehicles: new Set(), trips: 0, active: 0 };
                 acc[name].vehicles.add(trip.vehicle_plate || 'N/A');
@@ -736,10 +749,11 @@
         }
 
         function renderReports() {
-            const revenue = allTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
-            const expense = allTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
+            const searchedTrips = getSearchMatchedTrips();
+            const revenue = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
+            const expense = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
             renderTable('report-table', ['Report', 'Basis', 'Current Value'], [
-                ['Current Location Report', 'trip.timeline / current_location_id', `${allTrips.length} trips`],
+                ['Current Location Report', 'trip.timeline / current_location_id', `${searchedTrips.length} trips`],
                 ['Payment Request Report', 'approved payment_request linked by trip_id', money(expense)],
                 ['Income Statement', 'confirmed receivables minus approved expenses', money(revenue - expense)],
             ]);
@@ -817,13 +831,7 @@
             statusFilter = event.target.value;
             renderTrips();
         });
-        ['filter-plate', 'filter-driver', 'filter-from', 'filter-to'].forEach((id) => {
-            $(id).addEventListener('input', renderAll);
-        });
-        $('btn-reset').addEventListener('click', () => {
-            ['filter-plate', 'filter-driver', 'filter-from', 'filter-to'].forEach((id) => { $(id).value = ''; });
-            renderAll();
-        });
+        $('global-search').addEventListener('input', renderAll);
 
         loadDashboard();
     </script>
