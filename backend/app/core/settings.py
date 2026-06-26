@@ -19,6 +19,7 @@ class Settings(BaseModel):
     )
     db_connect_timeout_seconds: float = float(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "5"))
     db_query_timeout_seconds: float = float(os.getenv("DB_QUERY_TIMEOUT_SECONDS", "8"))
+    redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 
 @lru_cache

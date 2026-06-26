@@ -1,6 +1,10 @@
 """Dashboard router with real Odoo snapshot data and fast mock-data mode."""
 
 import asyncio
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,8 +14,81 @@ from app.core.database import get_session
 from app.core.settings import get_settings
 from app.mock_data import mock_db, MockDatabase
 
+try:
+    import redis as redis_client
+except ImportError:  # pragma: no cover - optional runtime dependency
+    redis_client = None
+
 router = APIRouter()
 settings = get_settings()
+
+
+def _get_mock_dashboard() -> dict:
+    return {**mock_db.get_full_dashboard(), "_mode": "demo", "_source": "mock"}
+
+
+def _load_live_snapshot() -> Optional[dict]:
+    if redis_client is not None:
+        try:
+            redis = redis_client.Redis.from_url(settings.redis_url, decode_responses=True)
+            raw_snapshot = redis.get("fleet:snapshot")
+        except Exception:
+            raw_snapshot = None
+
+        if raw_snapshot:
+            snapshot = _parse_live_snapshot(raw_snapshot)
+            if snapshot is not None:
+                return snapshot
+
+    path = Path(settings.snapshot_path)
+    if not path.exists():
+        return None
+
+    try:
+        return _parse_live_snapshot(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _parse_live_snapshot(raw_snapshot: str) -> Optional[dict]:
+    try:
+        snapshot = json.loads(raw_snapshot)
+    except json.JSONDecodeError:
+        return None
+
+    if snapshot.get("mode") != "live":
+        return None
+
+    data = snapshot.get("data")
+    if not isinstance(data, dict):
+        return None
+
+    return {
+        **data,
+        "_mode": "demo",
+        "_source": "live_snapshot",
+        "_snapshot_generated_at": snapshot.get("generated_at"),
+    }
+
+
+def _write_live_snapshot(data: dict) -> None:
+    snapshot = {
+        "mode": "live",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "data": data,
+    }
+    raw_snapshot = json.dumps(snapshot, default=str)
+
+    if redis_client is not None:
+        try:
+            redis = redis_client.Redis.from_url(settings.redis_url, decode_responses=True)
+            redis.set("fleet:snapshot", raw_snapshot, ex=300)
+        except Exception:
+            pass
+
+    path = Path(settings.snapshot_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(raw_snapshot)
 
 
 @router.get("/snapshot")
@@ -117,25 +194,30 @@ async def get_full_dashboard(
 
     if mode == "live":
         try:
-            return await asyncio.wait_for(
+            data = await asyncio.wait_for(
                 _get_live_dashboard(db),
                 timeout=settings.db_query_timeout_seconds,
             )
+            try:
+                _write_live_snapshot(data)
+            except OSError:
+                pass
+            return data
         except asyncio.TimeoutError:
             return {
-                **mock_db.get_full_dashboard(),
+                **(_load_live_snapshot() or _get_mock_dashboard()),
                 "_mode": "demo",
                 "_warning": f"Live DB timed out after {settings.db_query_timeout_seconds:g}s, showing demo data.",
             }
         except Exception as e:
             # If live DB fails, fall back to demo data
             return {
-                **mock_db.get_full_dashboard(),
+                **(_load_live_snapshot() or _get_mock_dashboard()),
                 "_mode": "demo",
                 "_warning": f"Live DB unavailable ({str(e)[:80]}), showing demo data.",
             }
 
-    return {**mock_db.get_full_dashboard(), "_mode": "demo"}
+    return _load_live_snapshot() or _get_mock_dashboard()
 
 
 async def _get_live_dashboard(db: AsyncSession) -> dict:

@@ -36,8 +36,7 @@ async def build_snapshot():
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Use demo mode for fast builds, or live mode for real data
-            url = f"{API_BASE}/api/dashboard/full?mode=demo"
+            url = f"{API_BASE}/api/dashboard/full?mode=live"
             resp = await client.get(url)
             resp.raise_for_status()
             data = resp.json()
@@ -49,16 +48,20 @@ async def build_snapshot():
         print(f"  → Error fetching dashboard data: {exc}")
         return
 
+    if data.get("_mode") != "live":
+        print(f"  → Live data unavailable, not caching fallback: {data.get('_warning', 'unknown error')}")
+        return
+
     snapshot = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "mode": "demo",
+        "mode": "live",
         "data": data,
     }
 
     r = _get_redis()
     if r:
         r.set("fleet:snapshot", json.dumps(snapshot), ex=300)
-        print(f"  → Cached to Redis, TTL 5min. Summary: {len(data.get('recent_trips', []))} trips, "
+        print(f"  → Cached to Redis, TTL 5min. Summary: {len(data.get('recent_journeys', []))} journeys, "
               f"revenue={data.get('total_revenue', 0):,.0f}")
     else:
         path = os.getenv("SNAPSHOT_PATH", "/tmp/fleet_snapshot.json")
