@@ -18,6 +18,18 @@ async def root():
     with open(dashboard_path, "r") as f:
         return f.read()
 
+@app.get("/detail.html", response_class=HTMLResponse)
+async def detail_page():
+    detail_path = os.path.join(static_dir, "detail.html")
+    with open(detail_path, "r") as f:
+        return f.read()
+
+@app.get("/report.html", response_class=HTMLResponse)
+async def report_page():
+    report_path = os.path.join(static_dir, "report.html")
+    with open(report_path, "r") as f:
+        return f.read()
+
 @app.get("/map.html", response_class=HTMLResponse)
 async def map_page():
     map_path = os.path.join(static_dir, "map.html")

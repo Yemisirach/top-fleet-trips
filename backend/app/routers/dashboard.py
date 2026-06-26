@@ -93,7 +93,7 @@ async def get_snapshot(db: AsyncSession = Depends(get_session)) -> dict:
 
 @router.get("/full")
 async def get_full_dashboard(
-    mode: str = Query("demo", description="'demo' for mock data, 'live' for real Odoo DB"),
+    mode: str = Query("live", description="'live' for real Odoo DB, 'demo' for mock data"),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
     """Return full dashboard data in a single call. Fast in demo mode."""

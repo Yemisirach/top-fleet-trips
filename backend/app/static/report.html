@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fleet Trips - Reports</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+        .app { display: flex; min-height: 100vh; }
+        .sidebar { width: 260px; min-height: 100vh; background: #0b1120; border-right: 1px solid #1e293b; position: fixed; top: 0; left: 0; }
+        .brand { padding: 24px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #1e293b; }
+        .logo-icon { width: 36px; height: 36px; border-radius: 10px; background: #1e293b; display: flex; align-items: center; justify-content: center; }
+        .logo-text { font-size: 18px; font-weight: 700; }
+        .nav { list-style: none; padding: 0 16px; margin-top: 12px; }
+        .nav li { padding: 12px 16px; margin-bottom: 4px; border-radius: 8px; display: flex; align-items: center; gap: 12px; color: #94a3b8; }
+        .nav li:hover { background: #1e293b; color: #e2e8f0; cursor: pointer; }
+        .nav li.active { background: #1e3a5f; color: #60a5fa; font-weight: 600; }
+        .main-content { margin-left: 260px; flex: 1; padding: 32px; }
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        .page-title { font-size: 28px; font-weight: 700; }
+        .tabs { display: flex; gap: 8px; margin: 24px 0; }
+        .tab { padding: 10px 24px; border-radius: 8px; background: #1e293b; border: 1px solid #334155; cursor: pointer; font-size: 14px; color: #94a3b8; transition: 0.2s; }
+        .tab.active { background: #4f6df5; border-color: #4f6df5; color: #fff; }
+        .kpi-row { display: flex; gap: 16px; margin: 20px 0; flex-wrap: wrap; }
+        .kpi-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; flex: 1; min-width: 160px; }
+        .kpi-label { font-size: 12px; color: #94a3b8; margin-bottom: 8px; text-transform: uppercase; }
+        .kpi-value { font-size: 28px; font-weight: 700; }
+        .report-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        .report-table th, .report-table td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #334155; }
+        .report-table th { background: #0b1120; color: #94a3b8; font-weight: 600; font-size: 13px; text-transform: uppercase; }
+        .report-table tr:hover { background: #1e293b; }
+        .status { display: inline-flex; padding: 4px 12px; border-radius: 20px; font-size: 12px; }
+        .status.on-trip { background: #052e16; color: #4ade80; }
+        .status.available { background: #1e3a5f; color: #60a5fa; }
+        .amount { font-family: monospace; }
+        .amount.revenue { color: #4ade80; }
+        .amount.expense { color: #f87171; }
+        .nav-link { text-decoration: none; color: inherit; }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="logo-icon">🏗️</div>
+                <div class="logo-text">Fleet Trips</div>
+            </div>
+            <ul class="nav">
+                <a href="/" class="nav-link"><li><span class="nav-icon">📊</span> Dashboard</li></a>
+                <li class="active"><span class="nav-icon">📈</span> Reports</li>
+            </ul>
+        </aside>
+        <div class="main-content">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Fleet Reports</h1>
+                    <p style="color: #94a3b8; margin-top: 4px;">Vehicle utilization &amp; financial reports</p>
+                </div>
+            </div>
+
+            <div class="kpi-row">
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Vehicles</div>
+                    <div class="kpi-value" id="total-vehicles">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">On Trip</div>
+                    <div class="kpi-value" id="active-vehicles">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Revenue</div>
+                    <div class="kpi-value amount revenue" id="total-revenue">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Expenses</div>
+                    <div class="kpi-value amount expense" id="total-expense">-</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Net Profit</div>
+                    <div class="kpi-value amount" id="net-profit">-</div>
+                </div>
+            </div>
+
+            <div class="tabs">
+                <button class="tab active" onclick="filterReport('daily', this)">Daily</button>
+                <button class="tab" onclick="filterReport('weekly', this)">Weekly</button>
+                <button class="tab" onclick="filterReport('monthly', this)">Monthly</button>
+                <button class="tab" onclick="filterReport('yearly', this)">Yearly</button>
+            </div>
+
+            <div id="report-table-container">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th>Vehicle</th>
+                            <th>Brand</th>
+                            <th>Driver</th>
+                            <th>Status</th>
+                            <th>Trips</th>
+                            <th>Revenue</th>
+                            <th>Expense</th>
+                            <th>Net</th>
+                        </tr>
+                    </thead>
+                    <tbody id="report-body">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allJourneys = [];
+        let allVehicles = [];
+
+        async function loadData() {
+            try {
+                const [journeysRes, vehiclesRes] = await Promise.all([
+                    fetch('/api/journeys').then(r => r.json()).catch(() => ({journeys: []})),
+                    fetch('/api/vehicles').then(r => r.json()).catch(() => ([]))
+                ]);
+
+                allJourneys = journeysRes.journeys || [];
+                allVehicles = vehiclesRes.vehicles || vehiclesRes || [];
+
+                if (!Array.isArray(allJourneys)) allJourneys = [];
+                if (!Array.isArray(allVehicles)) allVehicles = [];
+
+                updateKPIs();
+                filterReport('daily', document.querySelector('.tab.active'));
+            } catch (e) {
+                console.error('Failed to load data:', e);
+            }
+        }
+
+        function updateKPIs() {
+            const totalVehicles = allVehicles.length;
+            const activeVehicles = allVehicles.filter(v => v.status === 'on_trip' || v.status === 'on trip').length;
+
+            let totalRevenue = 0;
+            let totalExpense = 0;
+            allJourneys.forEach(j => {
+                totalRevenue += j.total_revenue || 0;
+                totalExpense += j.total_expense || 0;
+            });
+            const netProfit = totalRevenue - totalExpense;
+
+            document.getElementById('total-vehicles').textContent = totalVehicles;
+            document.getElementById('active-vehicles').textContent = activeVehicles;
+            document.getElementById('total-revenue').textContent = formatMoney(totalRevenue);
+            document.getElementById('total-expense').textContent = formatMoney(totalExpense);
+            document.getElementById('net-profit').textContent = formatMoney(netProfit);
+        }
+
+        function formatMoney(amount) {
+            return new Intl.NumberFormat('en-ET', { style: 'currency', currency: 'ETB', minimumFractionDigits: 2 }).format(amount || 0);
+        }
+
+        function filterReport(period, btn) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+
+            const now = new Date();
+            let startDate, endDate;
+
+            switch(period) {
+                case 'daily':
+                    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    endDate = new Date(startDate); endDate.setDate(endDate.getDate() + 1);
+                    break;
+                case 'weekly':
+                    startDate = new Date(now); startDate.setDate(now.getDate() - now.getDay());
+                    endDate = new Date(startDate); endDate.setDate(endDate.getDate() + 7);
+                    break;
+                case 'monthly':
+                    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                    endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+                    break;
+                case 'yearly':
+                    startDate = new Date(now.getFullYear(), 0, 1);
+                    endDate = new Date(now.getFullYear() + 1, 0, 1);
+                    break;
+                default:
+                    startDate = new Date(0); endDate = new Date();
+            }
+
+            const filtered = allJourneys.filter(j => {
+                if (!j.departure_date) return false;
+                const d = new Date(j.departure_date);
+                return d >= startDate && d < endDate;
+            });
+
+            renderTable(filtered);
+        }
+
+        function renderTable(journeys) {
+            const tbody = document.getElementById('report-body');
+            if (!journeys || journeys.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#94a3b8; padding: 40px;">No data for this period</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = journeys.map(j => {
+                const status = j.status || 'unknown';
+                const statusClass = status === 'in_progress' || status === 'on_trip' ? 'on-trip' : 'available';
+                const revenue = j.total_revenue || 0;
+                const expense = j.total_expense || 0;
+                const net = revenue - expense;
+                const trips = j.trips ? j.trips.length : 0;
+
+                return `<tr>
+                    <td>${j.vehicle_plate || j.vehicle_id || 'N/A'}</td>
+                    <td>${j.vehicle_brand || 'N/A'}</td>
+                    <td>${j.driver_name || 'N/A'}</td>
+                    <td><span class="status ${statusClass}">${status}</span></td>
+                    <td>${trips}</td>
+                    <td class="amount revenue">${formatMoney(revenue)}</td>
+                    <td class="amount expense">${formatMoney(expense)}</td>
+                    <td class="amount">${formatMoney(net)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        loadData();
+    </script>
+</body>
+</html>
