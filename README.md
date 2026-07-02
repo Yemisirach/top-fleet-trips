@@ -13,6 +13,16 @@ Fleet workflow platform for managing trips, vehicle assignments, payments, recei
 - GPS ingestion via Mayet
 - Odoo sync pipeline
 
+## App Login
+
+Fleet Trips uses its own app login, separate from Odoo sessions.
+
+- Manager: `danat.yoh` / `123` - can approve and update payment requests
+- Supervisor: `alula.yem` / `123` - can view app data
+- Salesperson: `barbra.sem` / `123` - can view app data
+
+Set `FLEET_AUTH_SECRET` in production so login cookies are signed with a deployment-specific secret.
+
 ## Repo Layout
 
 - `backend/` FastAPI app
@@ -26,6 +36,14 @@ Fleet workflow platform for managing trips, vehicle assignments, payments, recei
 2. Implement the FastAPI service contract.
 3. Implement workers and queue/event handling.
 4. Add Docker Compose for local and deployment runs.
+
+## Operations and Product Docs
+
+- [Operations runbook](docs/operations.md)
+- [Mayet GPS to Odoo sync plan](docs/mayet-odoo-sync.md)
+- [Mayet to Odoo dry run - 2026-06-29](docs/mayet-odoo-dry-run-2026-06-29.md)
+- [Safe Mayet to Odoo update SQL - 2026-06-29](docs/mayet-odoo-safe-updates-2026-06-29.sql)
+- [Mobile app plan](docs/mobile-app.md)
 
 ## Current Status
 

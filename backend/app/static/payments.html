@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fleet Trips - Payment Requests</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #f8fafc; --panel: #ffffff; --panel-2: #f4f8fd; --line: #d9e2ef;
+            --text: #0f172a; --muted: #64748b; --primary: #00499e; --secondary: #0e9849;
+            --primary-soft: #eaf4ff; --secondary-soft: #e9f9f0; --amber: #f59e0b; --red: #dc2626;
+        }
+        body.dark {
+            --bg: #0f172a; --panel: #111827; --panel-2: #162033; --line: #253244;
+            --text: #e5e7eb; --muted: #94a3b8;
+            --primary-soft: #0f2747; --secondary-soft: #0d2e1c;
+        }
+        body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; }
+        button, select, input { font: inherit; }
+        .layout { min-height: 100vh; display: flex; }
+        .sidebar { position: fixed; inset: 0 auto 0 0; width: 272px; background: var(--primary); color: #ffffff; display: flex; flex-direction: column; }
+        .brand { min-height: 72px; padding: 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.16); }
+        .brand-mark { width: 40px; height: 40px; border-radius: 8px; background: #ffffff; display: grid; place-items: center; overflow: hidden; }
+        .brand-mark img { width: 32px; height: 32px; display: block; }
+        .brand-title { font-weight: 800; line-height: 1.1; }
+        .brand-subtitle { color: rgba(255,255,255,0.78); font-size: 12px; margin-top: 2px; }
+        .nav { padding: 12px; display: grid; gap: 4px; }
+        .nav a { color: rgba(255,255,255,0.78); text-decoration: none; border-radius: 8px; padding: 11px 12px; display: flex; align-items: center; gap: 12px; }
+        .nav a:hover { background: rgba(255,255,255,0.1); color: #ffffff; }
+        .nav a.active { background: #ffffff; color: var(--primary); font-weight: 800; }
+        .icon { width: 18px; height: 18px; stroke-width: 2; flex: 0 0 auto; }
+        .main { width: 100%; min-width: 0; margin-left: 272px; padding: 24px; }
+        .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+        .page-title { font-size: 24px; font-weight: 900; }
+        .page-subtitle { color: var(--muted); font-size: 13px; margin-top: 3px; }
+        .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        select, input { min-height: 40px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 8px 10px; }
+        .btn { min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); padding: 8px 12px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+        .btn.primary { background: var(--primary); border-color: var(--primary); color: #ffffff; }
+        .btn.success { background: var(--secondary); border-color: var(--secondary); color: #ffffff; }
+        .mode-badge { min-height: 40px; display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); }
+        .mode-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--secondary); }
+        .role-badge { min-height: 40px; display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--primary-soft); color: var(--primary); font-weight: 800; }
+        .grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+        .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+        .card { padding: 16px; min-height: 104px; min-width: 0; }
+        .card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .card-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--primary-soft); color: var(--primary); }
+        .card-label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+        .card-value { font-size: 22px; font-weight: 900; margin-top: 9px; overflow-wrap: anywhere; }
+        .green { color: var(--secondary); }
+        .red { color: var(--red); }
+        .blue { color: var(--primary); }
+        .panel { overflow: hidden; margin-bottom: 20px; }
+        .panel-header { padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+        .panel-title { font-weight: 900; }
+        .panel-subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
+        .filter-bar { display: grid; grid-template-columns: 1.2fr 1fr 1fr 0.8fr auto auto auto; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel-2); align-items: center; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 960px; }
+        th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; }
+        th { color: var(--muted); font-size: 11px; text-transform: uppercase; background: var(--panel-2); }
+        tr:hover td { background: rgba(0, 73, 158, 0.04); }
+        .pill { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; font-size: 12px; }
+        .pill.good { color: var(--secondary); border-color: rgba(14,152,73,0.32); background: var(--secondary-soft); }
+        .pill.info { color: var(--primary); border-color: rgba(0,73,158,0.32); background: var(--primary-soft); }
+        .pill.amber { color: var(--amber); border-color: rgba(245,158,11,0.32); background: rgba(245,158,11,0.10); }
+        .pill.red { color: var(--red); border-color: rgba(220,38,38,0.32); background: rgba(220,38,38,0.10); }
+        .empty { padding: 36px 16px; text-align: center; color: var(--muted); }
+        .checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary); }
+        .action-btn { padding: 4px 10px; border-radius: 6px; border: none; cursor: pointer; font-size: 12px; }
+        .action-btn.approve { background: var(--secondary-soft); color: var(--secondary); }
+        .action-btn.reject { background: rgba(220,38,38,0.10); color: var(--red); }
+        .action-btn.edit { background: var(--primary-soft); color: var(--primary); }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 1000; }
+        .modal-overlay.open { display: flex; }
+        .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; width: 580px; max-width: 90%; max-height: 90vh; overflow-y: auto; }
+        .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
+        .modal-body { padding: 20px; }
+        .form-group { margin-bottom: 16px; }
+        .form-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+        .form-input, .form-select { width: 100%; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: var(--panel); color: var(--text); }
+        textarea.form-input { min-height: 80px; resize: vertical; }
+        textarea.request-text { min-height: 220px; line-height: 1.55; white-space: pre-wrap; }
+        .modal-footer { padding: 12px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
+        .line-items { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-top: 8px; }
+        .line-items th, .line-items td { padding: 8px 12px; font-size: 13px; }
+        .line-items th { background: var(--panel-2); }
+        @media (max-width: 1180px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 860px) {
+            .sidebar { position: static; width: 100%; min-height: auto; }
+            .layout { display: block; }
+            .main { margin-left: 0; padding: 16px; }
+            .topbar { align-items: flex-start; flex-direction: column; }
+            .grid { grid-template-columns: 1fr; }
+            .filter-bar { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="Fleet Trips"></div>
+                <div><div class="brand-title">Fleet Trips</div><div class="brand-subtitle">Payment Requests</div></div>
+            </div>
+            <nav class="nav">
+                <a href="/"><i data-lucide="layout-dashboard" class="icon"></i>Dashboard</a>
+                <a href="/map.html"><i data-lucide="map" class="icon"></i>Map</a>
+                <a href="/detail.html"><i data-lucide="activity" class="icon"></i>Detail</a>
+                <a href="/report.html"><i data-lucide="file-bar-chart" class="icon"></i>Reports</a>
+                <a href="/payments.html" class="active"><i data-lucide="credit-card" class="icon"></i>Payments</a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <div class="topbar">
+                <div><h1 class="page-title">Payment Requests</h1><div class="page-subtitle">Approve, edit, and export payment requests</div></div>
+                <div class="controls">
+                    <div class="mode-badge" id="mode-badge"><span class="mode-dot"></span><span id="mode-label">Live DB</span></div>
+                    <div class="role-badge" id="role-badge">Checking role</div>
+                    <select id="mode-select" aria-label="Data source"><option value="live">Live DB</option><option value="demo">Demo DB</option></select>
+                    <button class="btn" id="theme-toggle" type="button"><i data-lucide="moon" class="icon"></i><span id="theme-label">Dark</span></button>
+                    <button class="btn" id="logout-btn" type="button"><i data-lucide="log-out" class="icon"></i>Logout</button>
+                </div>
+            </div>
+
+            <section class="grid" id="payment-kpis"></section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div><div class="panel-title">Payment Requests</div><div class="panel-subtitle" id="payment-subtitle">Live payment data</div></div>
+                    <div class="controls">
+                        <button class="btn success" id="new-request" type="button"><i data-lucide="plus" class="icon"></i>New Request</button>
+                        <button class="btn" id="copy-report" type="button"><i data-lucide="copy" class="icon"></i>Copy Report</button>
+                        <button class="btn primary" id="export-excel" type="button"><i data-lucide="file-spreadsheet" class="icon"></i>Export Excel</button>
+                    </div>
+                </div>
+                <div class="filter-bar">
+                    <input id="payment-search" type="search" placeholder="Search by plate, trip, requester, or supervisor">
+                    <select id="status-filter" aria-label="Payment status">
+                        <option value="all">All Statuses</option>
+                        <option value="draft">Draft</option>
+                        <option value="confirmed">Confirmed</option>
+                        <option value="approved">Approved</option>
+                        <option value="paid">Paid</option>
+                        <option value="posted">Posted</option>
+                        <option value="done">Done</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                    <input id="date-from" type="date" aria-label="From date">
+                    <input id="date-to" type="date" aria-label="To date">
+                    <button class="btn primary" id="apply-filters" type="button"><i data-lucide="search" class="icon"></i>Filter</button>
+                    <button class="btn" id="clear-filters" type="button"><i data-lucide="x" class="icon"></i>Clear</button>
+                </div>
+                <div class="table-wrap"><table id="payment-table"></table></div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Edit/Approve Modal -->
+    <div class="modal-overlay" id="edit-modal">
+        <div class="modal">
+            <div class="modal-header"><h3 id="modal-title">Edit Payment Request</h3><button class="btn" onclick="closeModal()"><i data-lucide="x" class="icon"></i></button></div>
+            <div class="modal-body" id="modal-body"></div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal()">Cancel</button>
+                <button class="btn success" id="save-payment" onclick="savePayment()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>
+        const API_BASE = '/api';
+        let currentMode = localStorage.getItem('fleetDashboardMode') || 'live';
+        let currentTheme = localStorage.getItem('fleetTheme') || 'light';
+        let allPayments = [];
+        let filteredPayments = [];
+        let selectedIds = new Set();
+        let currentUser = null;
+        let currentModalMode = 'edit';
+
+        const $ = (id) => document.getElementById(id);
+        const clean = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+        const money = (v) => new Intl.NumberFormat('en-ET', {style:'currency', currency:'ETB', maximumFractionDigits:0}).format(Number(v || 0));
+        const amount = (v) => new Intl.NumberFormat('en-ET', {maximumFractionDigits:2}).format(Number(v || 0));
+
+        function refreshIcons() { if (window.lucide) window.lucide.createIcons(); }
+
+        async function fetchJson(url) {
+            const r = await fetch(url);
+            if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || `HTTP ${r.status}`);
+            return await r.json();
+        }
+
+        function isManager() {
+            return currentUser && currentUser.role === 'manager';
+        }
+
+        async function loadCurrentUser() {
+            try {
+                const data = await fetchJson(`${API_BASE}/auth/me`);
+                currentUser = data.user;
+                $('role-badge').textContent = `${currentUser.name} · ${currentUser.role}`;
+            } catch (e) {
+                window.location.href = '/login.html';
+            }
+        }
+
+        async function loadPayments() {
+            $('mode-select').value = currentMode;
+            try {
+                const data = await fetchJson(`${API_BASE}/reports/payment-requests`);
+                allPayments = data || [];
+                applyFilters();
+            } catch (e) {
+                $('payment-table').innerHTML = `<tr><td class="empty" colspan="9">Error loading: ${clean(e.message)}</td></tr>`;
+            }
+        }
+
+        function applyFilters() {
+            const search = $('payment-search').value.trim().toLowerCase();
+            const status = $('status-filter').value;
+            const fromDate = $('date-from').value;
+            const toDate = $('date-to').value;
+
+            filteredPayments = allPayments.filter(p => {
+                if (status !== 'all' && (p.state || '').toLowerCase() !== status) return false;
+                if (fromDate && p.date && p.date < fromDate) return false;
+                if (toDate && p.date && p.date > toDate) return false;
+                if (search) {
+                    const text = `${p.name || ''} ${p.reference || ''} ${p.vehicle_plate || ''} ${p.trip_reference || ''} ${p.requester_name || ''} ${p.supervisor_name || ''}`.toLowerCase();
+                    if (!text.includes(search)) return false;
+                }
+                return true;
+            });
+            renderPayments();
+            renderKpis();
+        }
+
+        function renderKpis() {
+            const total = filteredPayments.length;
+            const pending = filteredPayments.filter(p => ['draft','confirmed'].includes((p.state || '').toLowerCase())).reduce((s,p) => s + (p.total_amount || 0), 0);
+            const approved = filteredPayments.filter(p => ['approved','paid','posted','done'].includes((p.state || '').toLowerCase())).reduce((s,p) => s + (p.total_amount || 0), 0);
+            const cancelled = filteredPayments.filter(p => (p.state || '').toLowerCase() === 'cancelled').reduce((s,p) => s + (p.total_amount || 0), 0);
+
+            $('payment-kpis').innerHTML = [
+                ['Total Requests', total, 'credit-card', 'blue'],
+                ['Pending Amount', money(pending), 'clock', 'red'],
+                ['Approved Amount', money(approved), 'check-circle', 'green'],
+                ['Cancelled', money(cancelled), 'x-circle', 'red'],
+                ['Total Value', money(filteredPayments.reduce((s,p) => s + (p.total_amount || 0), 0)), 'dollar-sign', 'blue']
+            ].map(([label, value, icon, tone]) => `
+                <div class="card"><div class="card-top"><div class="card-label">${clean(label)}</div><span class="card-icon"><i data-lucide="${clean(icon)}" class="icon"></i></span></div><div class="card-value ${tone}">${clean(value)}</div></div>
+            `).join('');
+            refreshIcons();
+        }
+
+        function statePill(state) {
+            const s = (state || 'unknown').toLowerCase();
+            const cls = ['paid','posted','done','approved'].includes(s) ? 'good' : ['draft','pending'].includes(s) ? 'amber' : s === 'cancelled' ? 'red' : 'info';
+            return `<span class="pill ${cls}">${clean(state)}</span>`;
+        }
+
+        function renderPayments() {
+            const tbody = filteredPayments.map(p => `
+                <tr>
+                    <td><input type="checkbox" class="checkbox" data-id="${p.id}" ${selectedIds.has(p.id) ? 'checked' : ''}></td>
+                    <td>${p.name || p.id}</td>
+                    <td>${p.vehicle_plate || 'N/A'}</td>
+                    <td>${p.trip_reference || 'N/A'}</td>
+                    <td>${p.requester_name || 'N/A'}</td>
+                    <td>${p.supervisor_name || 'N/A'}</td>
+                    <td>${statePill(p.state)}</td>
+                    <td>${p.date || 'N/A'}</td>
+                    <td>${money(p.total_amount)}</td>
+                    <td><button class="action-btn edit" onclick="editPayment('${p.id}')">${isManager() ? 'Edit' : 'View'}</button></td>
+                </tr>
+            `).join('');
+
+            $('payment-table').innerHTML = `
+                <thead><tr>
+                    <th><input type="checkbox" class="checkbox" id="select-all"></th>
+                    <th>Request</th><th>Vehicle</th><th>Trip</th><th>Requester</th><th>Supervisor</th><th>Status</th><th>Date</th><th>Amount</th><th>Actions</th>
+                </tr></thead>
+                <tbody>${tbody || '<tr><td class="empty" colspan="10">No matching payment requests.</td></tr>'}</tbody>
+            `;
+
+            const selectAll = $('select-all');
+            if (selectAll) {
+                selectAll.addEventListener('change', (event) => {
+                    filteredPayments.forEach((payment) => {
+                        if (event.target.checked) selectedIds.add(String(payment.id));
+                        else selectedIds.delete(String(payment.id));
+                    });
+                    renderPayments();
+                });
+            }
+            document.querySelectorAll('.checkbox[data-id]').forEach(cb => {
+                cb.addEventListener('change', (e) => {
+                    if (e.target.checked) selectedIds.add(e.target.dataset.id);
+                    else selectedIds.delete(e.target.dataset.id);
+                });
+            });
+            refreshIcons();
+        }
+
+        async function editPayment(id) {
+            try {
+                const detail = await fetchJson(`${API_BASE}/reports/payment-request-detail/${id}`);
+                openModal(detail);
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        function openNewPaymentRequest() {
+            currentModalMode = 'create';
+            $('modal-title').textContent = 'New Payment Request';
+            $('modal-body').innerHTML = `
+                <div class="form-group"><div class="form-label">Vehicle Plate</div><input class="form-input" id="edit-vehicle" placeholder="Plate number"></div>
+                <div class="form-group"><div class="form-label">Driver / Payee Name</div><input class="form-input" id="edit-driver" placeholder="Driver name"></div>
+                <div class="form-group"><div class="form-label">Trip / Section</div><input class="form-input" id="edit-trip" placeholder="Example: በባዶ ወደ ጅቡቲ"></div>
+                <div class="form-group"><div class="form-label">Total Amount</div><input class="form-input" id="edit-total" type="number" step="0.01" placeholder="Leave empty to use the last amount in the text"></div>
+                <div class="form-group"><div class="form-label">Payment Request Text</div><textarea class="form-input request-text" id="edit-request-text" placeholder="Paste supervisor request exactly as posted on WhatsApp."></textarea></div>
+                <div class="form-group"><div class="form-label">Notes</div><textarea class="form-input" id="edit-notes" placeholder="Optional notes"></textarea></div>
+            `;
+            $('edit-modal').dataset.paymentId = '';
+            $('save-payment').style.display = 'inline-flex';
+            $('save-payment').textContent = 'Create Request';
+            $('edit-modal').classList.add('open');
+            refreshIcons();
+        }
+
+        function openModal(payment) {
+            currentModalMode = 'edit';
+            $('modal-title').textContent = isManager() ? 'Edit Payment Request' : 'View Payment Request';
+            const manager = isManager();
+            const appRequest = payment.source === 'app' || String(payment.id || '').startsWith('APP-');
+            $('modal-body').innerHTML = `
+                <div class="form-group"><div class="form-label">Request Name</div><div class="form-input">${clean(payment.name || payment.reference || '')}</div></div>
+                <div class="form-group"><div class="form-label">Vehicle Plate</div><div class="form-input">${clean(payment.vehicle_plate || 'N/A')}</div></div>
+                <div class="form-group"><div class="form-label">Trip Reference</div><div class="form-input">${clean(payment.trip_reference || 'N/A')}</div></div>
+                <div class="form-group">
+                    <div class="form-label">Status</div>
+                    <select class="form-select" id="edit-status" ${manager ? '' : 'disabled'}>
+                        <option value="draft" ${payment.state === 'draft' ? 'selected' : ''}>Draft</option>
+                        <option value="confirmed" ${payment.state === 'confirmed' ? 'selected' : ''}>Confirmed</option>
+                        <option value="approved" ${payment.state === 'approved' ? 'selected' : ''}>Approved</option>
+                        <option value="paid" ${payment.state === 'paid' ? 'selected' : ''}>Paid</option>
+                        <option value="posted" ${payment.state === 'posted' ? 'selected' : ''}>Posted</option>
+                        <option value="done" ${payment.state === 'done' ? 'selected' : ''}>Done</option>
+                        <option value="cancelled" ${payment.state === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+                    </select>
+                </div>
+                <div class="form-group"><div class="form-label">Requester</div><div class="form-input">${clean(payment.requester_name || 'Unknown')}</div></div>
+                <div class="form-group"><div class="form-label">Supervisor</div><div class="form-input">${clean(payment.supervisor_name || 'Unknown')}</div></div>
+                <div class="form-group"><div class="form-label">Total Amount</div>${appRequest && manager ? `<input class="form-input" id="edit-total" type="number" step="0.01" value="${Number(payment.total_amount || 0)}">` : `<div class="form-input">${money(payment.total_amount)}</div>`}</div>
+                ${appRequest ? `<div class="form-group"><div class="form-label">Payment Request Text</div><textarea class="form-input request-text" id="edit-request-text" ${manager ? '' : 'disabled'}>${clean(payment.request_text || '')}</textarea></div>` : ''}
+                <div class="form-group"><div class="form-label">Notes</div><textarea class="form-input" id="edit-notes" placeholder="${manager ? 'Add approval notes...' : 'Manager role required to update'}" ${manager ? '' : 'disabled'}></textarea></div>
+                <div class="form-group">
+                    <div class="form-label">Line Items</div>
+                    <div class="line-items"><table><thead><tr><th>Item</th><th>Description</th><th>Amount</th></tr></thead>
+                    <tbody>${(payment.line_items || []).map(l => `<tr><td>${clean(l.item || '')}</td><td>${clean(l.description || '')}</td><td>${money(l.amount)}</td></tr>`).join('')}</tbody></table></div>
+                </div>
+            `;
+            $('edit-modal').dataset.paymentId = payment.id;
+            $('save-payment').style.display = manager ? 'inline-flex' : 'none';
+            $('save-payment').textContent = 'Save Changes';
+            $('edit-modal').classList.add('open');
+        }
+
+        function closeModal() { $('edit-modal').classList.remove('open'); }
+
+        async function savePayment() {
+            if (currentModalMode === 'create') {
+                const payload = {
+                    vehicle_plate: $('edit-vehicle').value,
+                    driver_name: $('edit-driver').value,
+                    supervisor_name: $('edit-driver').value,
+                    trip_reference: $('edit-trip').value,
+                    total_amount: $('edit-total').value,
+                    request_text: $('edit-request-text').value,
+                    notes: $('edit-notes').value,
+                };
+                try {
+                    const response = await fetch(`${API_BASE}/reports/payment-request`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(payload)
+                    });
+                    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
+                    closeModal();
+                    loadPayments();
+                } catch (e) { alert('Error: ' + e.message); }
+                return;
+            }
+            if (!isManager()) {
+                alert('Only managers can approve or update payment requests.');
+                return;
+            }
+            const id = $('edit-modal').dataset.paymentId;
+            const state = $('edit-status').value;
+            const notes = $('edit-notes').value;
+            const requestText = $('edit-request-text') ? $('edit-request-text').value : undefined;
+            const totalAmount = $('edit-total') ? $('edit-total').value : undefined;
+            try {
+                const response = await fetch(`${API_BASE}/reports/payment-request/${id}`, {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({state, notes, request_text: requestText, total_amount: totalAmount})
+                });
+                if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
+                closeModal();
+                loadPayments();
+            } catch (e) { alert('Error: ' + e.message); }
+        }
+
+        $('new-request').addEventListener('click', openNewPaymentRequest);
+        $('apply-filters').addEventListener('click', applyFilters);
+        $('clear-filters').addEventListener('click', () => { $('payment-search').value = ''; $('status-filter').value = 'all'; $('date-from').value = ''; $('date-to').value = ''; applyFilters(); });
+        $('payment-search').addEventListener('keydown', e => { if (e.key === 'Enter') applyFilters(); });
+        $('status-filter').addEventListener('change', applyFilters);
+        $('date-from').addEventListener('change', applyFilters);
+        $('date-to').addEventListener('change', applyFilters);
+
+        async function paymentDetailsForExport() {
+            const payments = selectedIds.size ? filteredPayments.filter(p => selectedIds.has(String(p.id))) : filteredPayments;
+            return Promise.all(payments.map(async (payment) => {
+                try {
+                    return await fetchJson(`${API_BASE}/reports/payment-request-detail/${payment.id}`);
+                } catch {
+                    return payment;
+                }
+            }));
+        }
+
+        function paymentRequestText(payment) {
+            if (payment.request_text) return payment.request_text;
+            const lines = [`${payment.trip_reference || payment.name || 'Payment Request'}`];
+            (payment.line_items || []).forEach((line, index) => {
+                lines.push(`${index + 1}, ${line.description || line.item || 'Payment line'} = ${amount(line.amount)} ብር`);
+            });
+            lines.push(`ድምር=${amount(payment.total_amount)} ብር`);
+            return lines.join('\n');
+        }
+
+        function buildPaymentWhatsAppReport(details) {
+            return details.map((payment, index) => [
+                `${index + 1}, ${payment.supervisor_name || payment.requester_name || payment.name || 'Payment request'}`,
+                payment.vehicle_plate ? `Plate: ${payment.vehicle_plate}` : '',
+                paymentRequestText(payment),
+                `Total: ${amount(payment.total_amount)} ብር`,
+            ].filter(Boolean).join('\n')).join('\n\n');
+        }
+
+        $('copy-report').addEventListener('click', async () => {
+            const details = await paymentDetailsForExport();
+            const text = buildPaymentWhatsAppReport(details);
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                textarea.remove();
+            }
+            $('mode-label').textContent = 'Copied payment report';
+            setTimeout(() => $('mode-label').textContent = 'Live DB', 1200);
+        });
+
+        $('export-excel').addEventListener('click', async () => {
+            const details = await paymentDetailsForExport();
+            const rows = [
+                ['ID', 'Name', 'Reference', 'Vehicle Plate', 'Trip', 'State', 'Date', 'Approved On', 'Requester', 'Supervisor', 'Request Text', 'Line Item', 'Description', 'Line Amount', 'Total Amount']
+            ];
+            details.forEach((payment) => {
+                const lines = payment.line_items && payment.line_items.length ? payment.line_items : [{item: '', description: payment.request_text || '', amount: payment.total_amount}];
+                lines.forEach((line) => rows.push([
+                    payment.id, payment.name, payment.reference, payment.vehicle_plate, payment.trip_reference, payment.state, payment.date, payment.approved_on, payment.requester_name, payment.supervisor_name || '',
+                    payment.request_text || '', line.item || '', line.description || '', line.amount || 0, payment.total_amount || 0,
+                ]));
+            });
+            const html = `<html><head><meta charset="UTF-8"></head><body><table>${rows.map(r => `<tr>${r.map(c => `<td>${clean(c)}</td>`).join('')}</tr>`).join('')}</table></body></html>`;
+            const blob = new Blob([html], {type: 'application/vnd.ms-excel'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = `payment-requests-${new Date().toISOString().slice(0,10)}.xls`; a.click(); URL.revokeObjectURL(url);
+        });
+
+        $('logout-btn').addEventListener('click', async () => {
+            await fetch(`${API_BASE}/auth/logout`, {method: 'POST'});
+            window.location.href = '/login.html';
+        });
+
+        refreshIcons();
+        loadCurrentUser().then(loadPayments);
+    </script>
+</body>
+</html>

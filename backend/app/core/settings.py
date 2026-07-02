@@ -17,9 +17,15 @@ class Settings(BaseModel):
         "ODOO_DATABASE_URL",
         "postgresql://testbed_user:testbed%40321@100.121.12.65:5432/Testbed",
     )
+    odoo_url: str = os.getenv("ODOO_URL", "")
+    odoo_db: str = os.getenv("ODOO_DB", "Testbed")
     db_connect_timeout_seconds: float = float(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "5"))
     db_query_timeout_seconds: float = float(os.getenv("DB_QUERY_TIMEOUT_SECONDS", "8"))
+    odoo_role_lookup_timeout_seconds: float = float(os.getenv("ODOO_ROLE_LOOKUP_TIMEOUT_SECONDS", "1.5"))
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    mayet_url: str = os.getenv("MAYET_URL", "https://mayetgps.com/")
+    mayet_username: str = os.getenv("MAYET_USERNAME", "")
+    mayet_password: str = os.getenv("MAYET_PASSWORD", "")
 
 
 @lru_cache

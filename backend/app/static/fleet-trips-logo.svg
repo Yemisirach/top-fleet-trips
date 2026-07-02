@@ -1,0 +1,10 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Fleet Trips logo">
+  <rect width="128" height="128" rx="28" fill="#00499E"/>
+  <path d="M31 75C31 58.984 43.984 46 60 46H91" stroke="#EAF4FF" stroke-width="10" stroke-linecap="round"/>
+  <path d="M38 84H91C99.284 84 106 77.284 106 69V55" stroke="#0E9849" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="40" cy="84" r="9" fill="#EAF4FF"/>
+  <circle cx="89" cy="84" r="9" fill="#EAF4FF"/>
+  <circle cx="91" cy="46" r="8" fill="#0E9849"/>
+  <path d="M23 36H58" stroke="#EAF4FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M23 52H45" stroke="#9DFFCA" stroke-width="8" stroke-linecap="round"/>
+</svg>

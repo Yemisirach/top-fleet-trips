@@ -4,20 +4,37 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fleet Trips Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
-            --bg: #0a0f1a;
+            --bg: #f8fafc;
+            --panel: #ffffff;
+            --panel-2: #f4f8fd;
+            --line: #d9e2ef;
+            --text: #0f172a;
+            --muted: #64748b;
+            --blue: #00499e;
+            --green: #0e9849;
+            --amber: #f59e0b;
+            --red: #dc2626;
+            --violet: #5b67d8;
+            --primary-soft: #eaf4ff;
+            --secondary-soft: #e9f9f0;
+            --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 10px 30px rgba(15, 23, 42, 0.04);
+            --shadow-hover: 0 14px 34px rgba(15, 23, 42, 0.08);
+        }
+        body.dark {
+            --bg: #0f172a;
             --panel: #111827;
             --panel-2: #162033;
-            --line: #273449;
+            --line: #253244;
             --text: #e5e7eb;
             --muted: #94a3b8;
-            --blue: #38bdf8;
-            --green: #22c55e;
-            --amber: #f59e0b;
-            --red: #ef4444;
-            --violet: #a78bfa;
+            --primary-soft: #0f2747;
+            --secondary-soft: #0d2e1c;
+            --shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 10px 30px rgba(0, 0, 0, 0.18);
+            --shadow-hover: 0 14px 34px rgba(0, 0, 0, 0.24);
         }
         body {
             min-height: 100vh;
@@ -26,13 +43,15 @@
             font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
         button, input, select { font: inherit; }
+        button { font: inherit; }
+        .icon { width: 18px; height: 18px; stroke-width: 2; flex: 0 0 auto; }
         .layout { min-height: 100vh; display: flex; }
         .sidebar {
             position: fixed;
             inset: 0 auto 0 0;
             z-index: 30;
             width: 272px;
-            background: #0d1424;
+            background: #00499e;
             border-right: 1px solid var(--line);
             display: flex;
             flex-direction: column;
@@ -53,12 +72,14 @@
             border-radius: 8px;
             display: grid;
             place-items: center;
-            background: #172554;
-            color: #bae6fd;
+            background: #ffffff;
+            color: #00499e;
             font-weight: 800;
+            overflow: hidden;
         }
-        .brand-title { font-weight: 800; line-height: 1.1; }
-        .brand-subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
+        .brand-mark img { width: 32px; height: 32px; display: block; }
+        .brand-title { font-weight: 800; line-height: 1.1; color: #ffffff; }
+        .brand-subtitle { color: rgba(255, 255, 255, 0.78); font-size: 12px; margin-top: 2px; }
         .sidebar.collapsed .brand-copy,
         .sidebar.collapsed .nav-label,
         .sidebar.collapsed .sidebar-footer { display: none; }
@@ -66,7 +87,7 @@
         .nav button, .nav a {
             width: 100%;
             border: 0;
-            color: var(--muted);
+            color: rgba(255, 255, 255, 0.78);
             background: transparent;
             text-decoration: none;
             border-radius: 8px;
@@ -76,14 +97,14 @@
             gap: 12px;
             cursor: pointer;
         }
-        .nav button:hover, .nav a:hover { background: #172033; color: var(--text); }
-        .nav button.active { background: #123047; color: #bae6fd; }
-        .nav-icon { width: 22px; text-align: center; flex: 0 0 22px; }
+        .nav button:hover, .nav a:hover { background: rgba(255, 255, 255, 0.1); color: #ffffff; }
+        .nav button.active { background: #ffffff; color: #00499e; }
+        .nav-icon { width: 22px; height: 22px; display: inline-grid; place-items: center; flex: 0 0 22px; }
         .sidebar-footer {
             margin-top: auto;
             padding: 14px 16px;
             border-top: 1px solid var(--line);
-            color: var(--muted);
+            color: rgba(255, 255, 255, 0.72);
             font-size: 12px;
         }
         .main {
@@ -110,6 +131,8 @@
             background: var(--panel);
             color: var(--text);
             cursor: pointer;
+            display: inline-grid;
+            place-items: center;
         }
         .page-title { font-size: 24px; font-weight: 800; }
         .page-subtitle { color: var(--muted); font-size: 13px; margin-top: 3px; }
@@ -129,7 +152,7 @@
         .mode-badge.warning .mode-dot { background: var(--red); }
         .mode-label { color: var(--muted); font-size: 13px; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         select, input {
-            background: #0b1220;
+            background: var(--panel);
             border: 1px solid var(--line);
             border-radius: 8px;
             color: var(--text);
@@ -138,24 +161,46 @@
         }
         .search-bar {
             display: grid;
-            grid-template-columns: minmax(220px, 1fr);
+            grid-template-columns: auto minmax(220px, 1fr) auto;
+            align-items: center;
             gap: 10px;
             margin-bottom: 20px;
             background: var(--panel);
             border: 1px solid var(--line);
             border-radius: 8px;
-            padding: 12px;
+            padding: 10px 12px;
+            box-shadow: var(--shadow);
         }
+        .search-bar:focus-within { border-color: rgba(0, 73, 158, 0.58); box-shadow: 0 0 0 3px rgba(0, 73, 158, 0.1); }
+        .search-icon { color: var(--blue); display: inline-grid; place-items: center; }
+        .search-bar input { border: 0; background: transparent; padding: 8px 0; min-height: 38px; outline: 0; }
+        .search-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+        .search-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: -10px 0 20px; }
+        .search-chip {
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: var(--panel);
+            color: var(--muted);
+            min-height: 30px;
+            padding: 5px 10px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .search-chip:hover { color: var(--blue); border-color: rgba(0, 73, 158, 0.4); background: var(--primary-soft); }
         .btn {
             border: 1px solid var(--line);
             border-radius: 8px;
             min-height: 40px;
             padding: 8px 12px;
             color: var(--text);
-            background: #172033;
+            background: var(--panel-2);
             cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }
-        .btn.primary { background: #075985; border-color: #0e7490; }
+        .btn.primary { background: #00499e; border-color: #00499e; color: #ffffff; }
         .btn:hover { filter: brightness(1.12); }
         .grid {
             display: grid;
@@ -167,14 +212,111 @@
             background: var(--panel);
             border: 1px solid var(--line);
             border-radius: 8px;
+            box-shadow: var(--shadow);
         }
-        .card { padding: 16px; min-height: 104px; }
-        .card-label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
-        .card-value { font-size: 24px; font-weight: 800; margin-top: 9px; }
+        .card { padding: 16px; min-height: 104px; min-width: 0; }
+        .metric-card {
+            width: 100%;
+            color: inherit;
+            text-align: left;
+            cursor: pointer;
+            transition: border-color 0.16s ease, transform 0.16s ease, background 0.16s ease;
+        }
+        .metric-card:hover { border-color: rgba(0, 73, 158, 0.55); background: var(--panel-2); transform: translateY(-1px); box-shadow: var(--shadow-hover); }
+        .card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .card-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--primary-soft); color: var(--blue); }
+        .card-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+        .card-value { font-size: 22px; font-weight: 800; margin-top: 9px; overflow-wrap: anywhere; }
         .card-value.green { color: var(--green); }
         .card-value.red { color: var(--red); }
         .card-value.blue { color: var(--blue); }
+        .card-value.amber { color: var(--amber); }
         .panel { overflow: hidden; margin-bottom: 20px; }
+        .analytics-strip {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .trend-card {
+            min-height: 172px;
+            padding: 16px;
+            display: grid;
+            gap: 14px;
+            align-content: space-between;
+            cursor: pointer;
+        }
+        .trend-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+        .trend-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+        .trend-value { font-size: 28px; font-weight: 900; margin-top: 4px; }
+        .trend-delta {
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            color: var(--muted);
+            background: var(--panel-2);
+            padding: 4px 8px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .sparkline { height: 62px; display: flex; align-items: end; gap: 6px; }
+        .spark-bar {
+            flex: 1;
+            min-width: 0;
+            height: 8%;
+            border-radius: 6px 6px 2px 2px;
+            background: linear-gradient(180deg, rgba(0, 73, 158, 0.9), rgba(0, 73, 158, 0.42));
+        }
+        .spark-bar.green { background: linear-gradient(180deg, rgba(14, 152, 73, 0.92), rgba(14, 152, 73, 0.38)); }
+        .spark-bar.amber { background: linear-gradient(180deg, rgba(245, 158, 11, 0.92), rgba(245, 158, 11, 0.36)); }
+        .spark-meta { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+        .graph-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 0.9fr 0.9fr;
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .map-overview { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; margin-bottom: 20px; }
+        .map-overview .panel { margin-bottom: 0; }
+        #dashboard-map { min-height: 360px; border-radius: 8px; overflow: hidden; }
+        .map-side { padding: 16px; display: grid; gap: 10px; align-content: start; }
+        .map-side-row { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 10px; color: inherit; text-decoration: none; }
+        .map-side-row:hover { border-color: rgba(0, 73, 158, 0.45); background: var(--primary-soft); }
+        .map-side-label { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+        .map-side-value { font-weight: 900; margin-top: 4px; overflow-wrap: anywhere; }
+        .chart-body { padding: 16px; display: grid; gap: 12px; }
+        .workflow {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .workflow-step {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            padding: 12px;
+            min-width: 0;
+            color: var(--text);
+            text-align: left;
+            cursor: pointer;
+        }
+        .workflow-step.active { border-color: rgba(0, 73, 158, 0.55); background: var(--primary-soft); }
+        .workflow-label { color: var(--muted); font-size: 11px; line-height: 1.25; text-transform: uppercase; letter-spacing: 0.04em; overflow-wrap: anywhere; }
+        .workflow-value { margin-top: 8px; font-size: 20px; font-weight: 900; }
+        .bar-list { display: grid; gap: 10px; }
+        .bar-row { display: grid; gap: 6px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+        .bar-row:hover .bar-track, .workflow-step:hover { border-color: rgba(56, 189, 248, 0.7); }
+        .bar-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+        .bar-track { height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; border: 1px solid var(--line); }
+        .bar-fill { height: 100%; width: 0; background: var(--blue); border-radius: inherit; }
+        .bar-fill.green { background: var(--green); }
+        .bar-fill.amber { background: var(--amber); }
+        .bar-fill.red { background: var(--red); }
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 14px;
+            padding: 16px;
+        }
         .overview-grid {
             display: grid;
             grid-template-columns: 1.25fr 0.9fr;
@@ -186,13 +328,17 @@
         .summary-row {
             display: flex;
             justify-content: space-between;
+            align-items: flex-start;
             gap: 12px;
             padding: 10px 12px;
             border: 1px solid var(--line);
             border-radius: 8px;
-            background: #0b1220;
+            background: var(--panel-2);
             font-size: 13px;
+            min-width: 0;
+            overflow-wrap: anywhere;
         }
+        .summary-row strong { text-align: right; overflow-wrap: anywhere; }
         .panel-header {
             padding: 14px 16px;
             display: flex;
@@ -206,8 +352,8 @@
         .table-wrap { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; min-width: 760px; }
         th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; }
-        th { color: var(--muted); font-size: 11px; text-transform: uppercase; background: #0d1424; }
-        tr:hover td { background: rgba(56, 189, 248, 0.04); }
+        th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--panel-2); }
+        tr:hover td { background: rgba(0, 73, 158, 0.04); }
         .pill {
             display: inline-flex;
             align-items: center;
@@ -220,36 +366,48 @@
             white-space: nowrap;
         }
         .pill.draft { color: #fde68a; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.1); }
-        .pill.available { color: #bae6fd; border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.1); }
+        .pill.available { color: #00499e; border-color: rgba(0, 73, 158, 0.35); background: var(--primary-soft); }
         .pill.assigned, .pill.dispatched { color: #c4b5fd; border-color: rgba(167, 139, 250, 0.45); background: rgba(167, 139, 250, 0.1); }
-        .pill.done { color: #bbf7d0; border-color: rgba(34, 197, 94, 0.45); background: rgba(34, 197, 94, 0.1); }
+        .pill.done { color: #0e9849; border-color: rgba(14, 152, 73, 0.35); background: var(--secondary-soft); }
         .pill.cancelled { color: #fecaca; border-color: rgba(239, 68, 68, 0.45); background: rgba(239, 68, 68, 0.1); }
         .trip-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 16px; }
-        .trip-card { padding: 16px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 13px; }
+        .trip-card { padding: 16px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 13px; min-width: 0; }
         .trip-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
-        .plate { font-weight: 900; font-size: 18px; letter-spacing: 0.2px; }
+        .trip-head-main { min-width: 0; }
+        .plate { font-weight: 900; font-size: 18px; letter-spacing: 0.2px; overflow-wrap: anywhere; }
         .muted { color: var(--muted); }
         .meta { display: grid; gap: 8px; font-size: 13px; }
-        .meta-row { display: flex; justify-content: space-between; gap: 12px; }
-        .meta-value { text-align: right; font-weight: 700; }
-        .route-panel { background: #0b1220; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+        .mobile-only { display: none; }
+        .meta-row { display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr); gap: 12px; align-items: start; }
+        .meta-value { text-align: right; font-weight: 700; overflow-wrap: anywhere; }
+        .trip-quick-grid { display: none; }
+        .quick-item { min-width: 0; }
+        .quick-label { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+        .quick-value { font-weight: 800; margin-top: 3px; overflow-wrap: anywhere; }
+        .route-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
         .route-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
-        .route-stop { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
+        .route-stop { min-width: 0; overflow-wrap: anywhere; font-weight: 800; }
         .route-arrow { color: var(--blue); flex: 0 0 auto; }
         .leg-list { display: grid; gap: 6px; margin-top: 10px; }
-        .leg-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; font-size: 12px; color: var(--muted); }
+        .leg-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; font-size: 12px; color: var(--muted); }
         .leg-row strong { color: var(--text); font-weight: 700; }
-        .money { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-        .money-box { background: #0b1220; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+        .money { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .money-box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; }
         .money-label { color: var(--muted); font-size: 11px; }
-        .money-value { font-weight: 800; margin-top: 4px; }
-        .telemetry { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-        .telemetry-box { border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: rgba(56, 189, 248, 0.06); }
+        .money-value { font-weight: 800; margin-top: 4px; overflow-wrap: anywhere; }
+        .telemetry { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .telemetry-box { border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: var(--primary-soft); min-width: 0; }
         .telemetry-label { color: var(--muted); font-size: 11px; }
         .telemetry-value { font-weight: 800; margin-top: 3px; }
-        .card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .card-actions .btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; font-size: 13px; }
-        .timeline-panel { display: none; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; overflow: hidden; }
+        .trip-more { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }
+        .trip-more summary { min-height: 38px; padding: 9px 11px; cursor: pointer; font-weight: 800; color: var(--blue); list-style: none; }
+        .trip-more summary::-webkit-details-marker { display: none; }
+        .trip-more summary::after { content: '+'; float: right; color: var(--muted); }
+        .trip-more[open] summary::after { content: '-'; }
+        .trip-more-body { display: grid; gap: 10px; padding: 0 11px 11px; }
+        .card-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .card-actions .btn { text-decoration: none; font-size: 13px; }
+        .timeline-panel { display: none; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }
         .timeline-panel.open { display: block; }
         .timeline-entry { display: grid; grid-template-columns: 90px 1fr; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
         .timeline-entry:last-child { border-bottom: 0; }
@@ -259,6 +417,7 @@
         .green { color: var(--green); }
         .red { color: var(--red); }
         .blue { color: var(--blue); }
+        .amber { color: var(--amber); }
         .view { display: none; }
         .view.active { display: block; }
         .empty { padding: 36px 16px; text-align: center; color: var(--muted); }
@@ -266,8 +425,12 @@
         .overlay.open { display: block; }
         @media (max-width: 1280px) {
             .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .analytics-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
             .trip-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .overview-grid { grid-template-columns: 1fr; }
+            .graph-grid { grid-template-columns: 1fr; }
+            .map-overview { grid-template-columns: 1fr; }
         }
         @media (max-width: 860px) {
             .sidebar { transform: translateX(-100%); width: 272px; }
@@ -280,13 +443,57 @@
             .topbar { align-items: flex-start; flex-direction: column; }
             .controls { width: 100%; justify-content: flex-start; }
             .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .analytics-strip { grid-template-columns: 1fr; }
+            .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .trip-list { grid-template-columns: 1fr; padding: 12px; }
+            .workflow { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+            .workflow-step { min-height: 72px; padding: 10px; }
+            .workflow-label { font-size: 10px; }
+            .workflow-value { font-size: 18px; margin-top: 6px; }
+            .summary-list { padding: 12px; }
+            .summary-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+            .summary-row strong { text-align: left; font-size: 16px; }
+            .panel-header { align-items: flex-start; flex-direction: column; }
             .mode-label { max-width: 190px; }
         }
         @media (max-width: 520px) {
             .grid { grid-template-columns: 1fr; }
-            .money, .telemetry { grid-template-columns: 1fr; }
+            .kpi-grid { grid-template-columns: 1fr; }
+            .graph-grid .panel:nth-child(n+2),
+            .overview-grid .panel:first-child,
+            .mobile-dashboard-secondary { display: none; }
+            .desktop-only { display: none !important; }
+            .mobile-only { display: block; }
+            .trip-quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+            .money.mobile-money { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .money.mobile-money .money-box:first-child { grid-column: 1 / -1; }
+            .telemetry { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .card-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .card-actions .btn { min-height: 38px; padding: 7px 8px; font-size: 12px; }
+            .meta-row { grid-template-columns: minmax(82px, auto) minmax(0, 1fr); gap: 8px; }
+            .meta-value { text-align: right; }
             .page-title { font-size: 20px; }
+            .main, .main.expanded { padding: 12px; }
+            .search-bar, .graph-grid, .overview-grid { margin-bottom: 12px; }
+            .map-overview { margin-bottom: 12px; }
+            .search-bar { grid-template-columns: auto minmax(0, 1fr); }
+            .search-meta { grid-column: 1 / -1; }
+            #dashboard-map { min-height: 320px; }
+            .card { min-height: auto; padding: 14px; }
+            .card-value { font-size: 20px; }
+            .chart-body { padding: 12px; }
+            .panel-title { font-size: 15px; }
+            .panel-subtitle { font-size: 11px; }
+            .workflow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .trip-card { padding: 12px; gap: 10px; }
+            .trip-card-head { align-items: flex-start; }
+            .plate { font-size: 17px; }
+            .route-panel { padding: 10px; }
+            .route-line { align-items: flex-start; gap: 6px; font-size: 13px; }
+            .leg-list { margin-top: 0; }
+            .leg-row { grid-template-columns: 1fr; gap: 3px; }
+            .money-box, .telemetry-box { padding: 8px; }
+            .money-value, .telemetry-value { font-size: 13px; }
         }
     </style>
 </head>
@@ -295,20 +502,20 @@
     <div class="layout">
         <aside class="sidebar" id="sidebar">
             <div class="brand">
-                <div class="brand-mark">FT</div>
+                <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="Fleet Trips"></div>
                 <div class="brand-copy">
                     <div class="brand-title">Fleet Trips</div>
                     <div class="brand-subtitle">Odoo workflow</div>
                 </div>
             </div>
             <nav class="nav" id="nav">
-                <button class="active" data-view="dashboard"><span class="nav-icon">D</span><span class="nav-label">Dashboard</span></button>
-                <button data-view="trips" data-status="active"><span class="nav-icon">T</span><span class="nav-label">Active Trips</span></button>
-                <button data-view="trips" data-status="available"><span class="nav-icon">A</span><span class="nav-label">Pending Assignment</span></button>
-                <button data-view="locations"><span class="nav-icon">L</span><span class="nav-label">Current Location</span></button>
-                <button data-view="payments"><span class="nav-icon">P</span><span class="nav-label">Payments</span></button>
-                <button data-view="supervisors"><span class="nav-icon">S</span><span class="nav-label">Supervisors</span></button>
-                <button data-view="reports"><span class="nav-icon">R</span><span class="nav-label">Reports</span></button>
+                <button class="active" data-view="dashboard"><span class="nav-icon"><i data-lucide="layout-dashboard" class="icon"></i></span><span class="nav-label">Dashboard</span></button>
+                <button data-view="trips" data-status="active"><span class="nav-icon"><i data-lucide="route" class="icon"></i></span><span class="nav-label">Active Trips</span></button>
+                <button data-view="trips" data-status="available"><span class="nav-icon"><i data-lucide="clipboard-list" class="icon"></i></span><span class="nav-label">Pending Assignment</span></button>
+                <button data-view="locations"><span class="nav-icon"><i data-lucide="map-pin" class="icon"></i></span><span class="nav-label">Current Location</span></button>
+                <button data-view="payments"><span class="nav-icon"><i data-lucide="credit-card" class="icon"></i></span><span class="nav-label">Payments</span></button>
+                <button data-view="supervisors"><span class="nav-icon"><i data-lucide="shield-check" class="icon"></i></span><span class="nav-label">Supervisors</span></button>
+                <button data-view="reports"><span class="nav-icon"><i data-lucide="file-bar-chart" class="icon"></i></span><span class="nav-label">Reports</span></button>
             </nav>
             <div class="sidebar-footer">
                 States: Draft, Available, Assigned, Dispatched, Done
@@ -318,7 +525,7 @@
         <main class="main" id="main">
             <div class="topbar">
                 <div class="topbar-left">
-                    <button class="icon-btn" id="menu-btn" aria-label="Toggle sidebar">☰</button>
+                    <button class="icon-btn" id="menu-btn" aria-label="Toggle sidebar"><i data-lucide="menu" class="icon"></i></button>
                     <div>
                         <h1 class="page-title" id="page-title">Dashboard</h1>
                         <div class="page-subtitle" id="page-subtitle">Trips workflow overview</div>
@@ -333,15 +540,54 @@
                         <option value="live">Live DB</option>
                         <option value="demo">Demo DB</option>
                     </select>
+                    <button class="btn" id="theme-toggle" type="button"><i data-lucide="moon" class="icon"></i><span id="theme-label">Dark</span></button>
                 </div>
             </div>
 
-            <section class="search-bar">
-                <input type="search" id="global-search" placeholder="Search vehicle, driver, route, state, payment">
+            <section class="search-bar" role="search" aria-label="Fleet search">
+                <span class="search-icon"><i data-lucide="search" class="icon"></i></span>
+                <input type="search" id="global-search" placeholder="Search customer, vehicle, plate, driver, route, payment status">
+                <span class="search-meta" id="search-meta">All records</span>
             </section>
+            <div class="search-chips" aria-label="Quick search filters">
+                <button class="search-chip" type="button" data-search-chip="pending">Pending payment</button>
+                <button class="search-chip" type="button" data-search-chip="paid">Paid</button>
+                <button class="search-chip" type="button" data-search-chip="dispatched">Dispatched</button>
+                <button class="search-chip" type="button" data-search-chip="unassigned">Unassigned</button>
+            </div>
 
             <section class="view active" id="view-dashboard">
                 <div class="grid" id="stats-grid"></div>
+                <div class="analytics-strip" id="analytics-strip"></div>
+                <div class="graph-grid">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <div class="panel-title">Trip Workflow</div>
+                                <div class="panel-subtitle">Draft -> Available -> Assigned -> Dispatched -> Done</div>
+                            </div>
+                        </div>
+                        <div class="chart-body" id="workflow-graph"></div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <div class="panel-title">Payment Graph</div>
+                                <div class="panel-subtitle">Paid and pending split</div>
+                            </div>
+                        </div>
+                        <div class="chart-body" id="payment-chart"></div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <div class="panel-title">Status Graph</div>
+                                <div class="panel-subtitle">Trips by lifecycle state</div>
+                            </div>
+                        </div>
+                        <div class="chart-body" id="status-chart"></div>
+                    </div>
+                </div>
                 <div class="overview-grid">
                     <div class="panel">
                         <div class="panel-header">
@@ -362,7 +608,7 @@
                         <div class="summary-list" id="financial-summary"></div>
                     </div>
                 </div>
-                <div class="panel">
+                <div class="panel mobile-dashboard-secondary">
                     <div class="panel-header">
                         <div>
                             <div class="panel-title">Driver Activity</div>
@@ -377,7 +623,7 @@
                             <div class="panel-title">Active Trips</div>
                             <div class="panel-subtitle">Available, Assigned, and Dispatched vehicles</div>
                         </div>
-                        <button class="btn" data-open-view="trips" data-status="active">Open</button>
+                        <button class="btn" data-open-view="trips" data-status="active"><i data-lucide="arrow-right" class="icon"></i>Open</button>
                     </div>
                     <div class="trip-list" id="dashboard-active"></div>
                 </div>
@@ -449,7 +695,7 @@
                             <div class="panel-title">Reports</div>
                             <div class="panel-subtitle">Current Location, Payment Request, and Income Statement</div>
                         </div>
-                        <a class="btn primary" href="/report.html">Open Reports Page</a>
+                        <a class="btn primary" href="/report.html"><i data-lucide="external-link" class="icon"></i>Open Reports Page</a>
                     </div>
                     <div class="table-wrap"><table id="report-table"></table></div>
                 </div>
@@ -457,8 +703,16 @@
         </main>
     </div>
 
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script>
         const API_BASE = '/api';
+        const cityCoords = {
+            "Topwater Ethiopia HQ, Addis Ababa": [9.0054, 38.7636], "TOP Factory": [9.0054, 38.7636], "Addis Ababa": [9.0054, 38.7636],
+            "Dire Dawa": [9.6076, 41.8667], "Dengego": [9.4000, 41.8500], "Bahir Dar": [11.5926, 37.3840], "Mekelle": [13.5034, 39.4753],
+            "Hawassa": [7.0621, 38.4764], "Adama": [8.5411, 39.2682], "Jimma": [7.6805, 36.8324], "Moyale": [3.5223, 39.0611],
+            "Gondar": [12.6030, 37.4521], "Harar": [9.3139, 42.1241],
+        };
         const views = {
             dashboard: ['Dashboard', 'Trips workflow overview'],
             trips: ['Trips', 'Draft to Done workflow'],
@@ -468,10 +722,13 @@
             reports: ['Reports', 'Operational and finance reports'],
         };
         let currentMode = localStorage.getItem('fleetDashboardMode') || 'live';
+        let currentTheme = localStorage.getItem('fleetTheme') || 'light';
         let currentView = 'dashboard';
         let statusFilter = 'all';
         let dashboardData = {};
         let allTrips = [];
+        let dashboardMap;
+        let dashboardMapLayer;
 
         const $ = (id) => document.getElementById(id);
         const money = (value) => new Intl.NumberFormat('en-ET', {
@@ -482,6 +739,21 @@
         const clean = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
         }[char]));
+        const metricIcons = {
+            Vehicles: 'truck',
+            Journeys: 'route',
+            'Active Journeys': 'navigation',
+            'Pending Assignment': 'clipboard-list',
+            'Customer Paid': 'badge-check',
+            'Customer Pending': 'clock',
+            'Customer Payment Collected': 'badge-check',
+            'Pending Customer Payment': 'clock',
+            'Vendor Payments Cleared': 'wallet-cards',
+            'Pending Vendor Payment': 'hourglass',
+            'Collection Rate': 'percent',
+            'Active Journey Ratio': 'activity',
+            'Vehicle Orders': 'list-ordered',
+        };
 
         function normalizeState(status) {
             const raw = String(status || 'draft').toLowerCase();
@@ -498,6 +770,26 @@
         function stateLabel(status) {
             const state = normalizeState(status);
             return state.replace('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+        }
+
+        function getPaymentState(trip) {
+            const pendingCustomer = Number(trip.pending_payment || 0);
+            const paidCustomer = Number(trip.paid_amount || 0);
+            const pendingVendor = Number(trip.pending_expense_payment || 0);
+            if (pendingCustomer <= 0 && pendingVendor <= 0 && (paidCustomer > 0 || Number(trip.total_revenue || 0) > 0)) return 'paid';
+            if (paidCustomer > 0 && pendingCustomer > 0) return 'partial';
+            if (pendingCustomer > 0 || pendingVendor > 0) return 'pending';
+            return 'open';
+        }
+
+        function paymentLabel(trip) {
+            const labels = { paid: 'Paid', partial: 'Partial', pending: 'Pending', open: 'Open' };
+            return labels[getPaymentState(trip)] || 'Open';
+        }
+
+        function getOrderCount(trip) {
+            const legCount = Array.isArray(trip.trips) ? trip.trips.length : 0;
+            return Number(trip.order_count || trip.order_receivable_count || trip.payment_request_count || legCount || 1);
         }
 
         function getSearchMatchedTrips() {
@@ -518,12 +810,72 @@
                     destinations,
                     stateLabel(trip.status),
                     trip.status,
+                    trip.customer_name,
                     trip.total_revenue,
                     trip.total_expense,
+                    trip.paid_amount,
+                    trip.pending_payment,
+                    trip.payment_request_total,
+                    trip.pending_expense_payment,
+                    trip.mayet_status,
+                    paymentLabel(trip),
+                    getOrderCount(trip),
                     legs,
                 ].join(' ').toLowerCase();
                 return haystack.includes(query);
             });
+        }
+
+        function formatKpiValue(item) {
+            if (item.format === 'money') return money(item.value);
+            if (item.format === 'percent') return `${Number(item.value || 0).toFixed(1).replace('.0', '')}%`;
+            return item.value ?? 0;
+        }
+
+        function refreshIcons() {
+            if (window.lucide) window.lucide.createIcons();
+        }
+
+        function applyTheme() {
+            document.body.classList.toggle('dark', currentTheme === 'dark');
+            $('theme-toggle').innerHTML = `<i data-lucide="${currentTheme === 'dark' ? 'sun' : 'moon'}" class="icon"></i><span id="theme-label">${currentTheme === 'dark' ? 'Light' : 'Dark'}</span>`;
+            refreshIcons();
+        }
+
+        function percentOf(value, total) {
+            if (!total) return 0;
+            return Math.max(0, Math.min(100, Math.round((Number(value || 0) / Number(total || 0)) * 100)));
+        }
+
+        function tripDateKey(trip) {
+            const raw = trip.departure_date || trip.create_date || trip.arrival_date;
+            const date = raw ? new Date(raw) : null;
+            if (!date || Number.isNaN(date.getTime())) return 'No date';
+            return date.toISOString().slice(0, 10);
+        }
+
+        function getDailySeries(trips, valueGetter) {
+            const buckets = new Map();
+            trips.forEach((trip) => {
+                const key = tripDateKey(trip);
+                buckets.set(key, (buckets.get(key) || 0) + Number(valueGetter(trip) || 0));
+            });
+            const entries = Array.from(buckets.entries())
+                .filter(([date]) => date !== 'No date')
+                .sort(([a], [b]) => a.localeCompare(b))
+                .slice(-7);
+            return entries.length ? entries : [['No date', 0]];
+        }
+
+        function renderSparkline(series, tone = '') {
+            const max = Math.max(1, ...series.map(([, value]) => Number(value || 0)));
+            return `
+                <div class="sparkline">
+                    ${series.map(([, value]) => `
+                        <span class="spark-bar ${tone}" style="height: ${Math.max(8, percentOf(value, max))}%"></span>
+                    `).join('')}
+                </div>
+            `;
         }
 
         function getFilteredTrips() {
@@ -542,13 +894,20 @@
             updateModeBadge(currentMode, 'Loading...');
             try {
                 const response = await fetch(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(currentMode)}`);
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || `Load failed (${response.status})`);
+                }
                 const data = await response.json();
                 dashboardData = data;
                 allTrips = data.recent_journeys || [];
                 updateModeBadge(data._mode || currentMode, data._warning || '');
                 renderAll();
             } catch (error) {
-                updateModeBadge(currentMode, 'Load failed');
+                dashboardData = {};
+                allTrips = [];
+                updateModeBadge(currentMode, error.message || 'Load failed');
+                renderAll();
             }
         }
 
@@ -562,24 +921,107 @@
 
         function renderStats() {
             const summary = dashboardData.summary || {};
+            const payment = dashboardData.payment_summary || {};
             const active = allTrips.filter((trip) => ['available', 'assigned', 'dispatched'].includes(normalizeState(trip.status))).length;
             const pending = allTrips.filter((trip) => normalizeState(trip.status) === 'available').length;
-            const revenue = dashboardData.total_revenue || allTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
-            const expense = dashboardData.total_expense || allTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
+            const orderCount = allTrips.reduce((sum, trip) => sum + getOrderCount(trip), 0);
             const cards = [
-                ['Vehicles', summary.total_vehicles || 0, 'blue'],
-                ['Trips', summary.total_journeys || allTrips.length, ''],
-                ['Active Trips', dashboardData.active_journey_count || active, 'blue'],
-                ['Pending Assignment', pending, ''],
-                ['Receivables', money(revenue), 'green'],
-                ['Approved Expenses', money(expense), 'red'],
+                ['Vehicles', summary.total_vehicles || 0, 'blue', 'supervisors'],
+                ['Journeys', summary.total_journeys || allTrips.length, '', 'trips', 'all'],
+                ['Active Journeys', dashboardData.active_journey_count || active, 'blue', 'trips', 'active'],
+                ['Vehicle Orders', orderCount || pending, '', 'trips', 'all'],
+                ['Customer Paid', money(payment.customer_paid_total || 0), 'green', 'payments'],
+                ['Customer Pending', money(payment.customer_pending_total || 0), 'red', 'payments'],
             ];
-            $('stats-grid').innerHTML = cards.map(([label, value, tone]) => `
-                <div class="card">
-                    <div class="card-label">${label}</div>
+            $('stats-grid').innerHTML = cards.map(([label, value, tone, view, status]) => `
+                <button type="button" class="card metric-card" data-open-view="${clean(view)}" ${status ? `data-status="${clean(status)}"` : ''}>
+                    <div class="card-top">
+                        <div class="card-label">${label}</div>
+                        <span class="card-icon"><i data-lucide="${clean(metricIcons[label] || 'circle-dot')}" class="icon"></i></span>
+                    </div>
                     <div class="card-value ${tone}">${value}</div>
-                </div>
+                </button>
             `).join('');
+        }
+
+        function renderAnalyticsStrip() {
+            const searchedTrips = getSearchMatchedTrips();
+            const payment = dashboardData.payment_summary || {};
+            const revenue = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0) || Number(payment.receivable_total || 0);
+            const paid = Number(payment.customer_paid_total || 0);
+            const pending = Number(payment.customer_pending_total || 0);
+            const active = searchedTrips.filter((trip) => ['available', 'assigned', 'dispatched'].includes(normalizeState(trip.status))).length;
+            const dispatched = searchedTrips.filter((trip) => normalizeState(trip.status) === 'dispatched').length;
+            const orderCount = searchedTrips.reduce((sum, trip) => sum + getOrderCount(trip), 0);
+            const tripSeries = getDailySeries(searchedTrips, () => 1);
+            const revenueSeries = getDailySeries(searchedTrips, (trip) => trip.total_revenue);
+            const orderSeries = getDailySeries(searchedTrips, (trip) => getOrderCount(trip));
+            const activeRate = searchedTrips.length ? Math.round((active / searchedTrips.length) * 100) : 0;
+            const collectionRate = (paid + pending) ? Math.round((paid / (paid + pending)) * 100) : 0;
+            const startLabel = tripSeries[0]?.[0] || 'No date';
+            const endLabel = tripSeries[tripSeries.length - 1]?.[0] || 'No date';
+            const cards = [
+                ['Journey Activity', searchedTrips.length, `${activeRate}% active`, tripSeries, '', 'trips', 'available'],
+                ['Revenue Trend', money(revenue), `${collectionRate}% collected`, revenueSeries, 'green', 'payments', ''],
+                ['Vehicle Orders', orderCount, 'last 7 journey days', orderSeries, 'amber', 'trips', 'all'],
+                ['Dispatched Now', dispatched, `${active} active journeys`, tripSeries.map(([day, value]) => [day, Math.min(value, dispatched || value)]), '', 'trips', 'dispatched'],
+            ];
+            $('analytics-strip').innerHTML = cards.map(([label, value, delta, series, tone, view, status]) => `
+                <article class="card trend-card" data-open-view="${clean(view)}" ${status ? `data-status="${clean(status)}"` : ''}>
+                    <div class="trend-head">
+                        <div>
+                            <div class="trend-label">${clean(label)}</div>
+                            <div class="trend-value">${clean(value)}</div>
+                        </div>
+                        <span class="trend-delta">${clean(delta)}</span>
+                    </div>
+                    ${renderSparkline(series, tone)}
+                    <div class="spark-meta"><span>${clean(startLabel)}</span><span>${clean(endLabel)}</span></div>
+                </article>
+            `).join('');
+        }
+
+        function renderDashboardMap() {
+            const target = $('dashboard-map');
+            if (!target || !window.L) return;
+            if (!dashboardMap) {
+                dashboardMap = L.map('dashboard-map', { scrollWheelZoom: false }).setView([9.0054, 38.7636], 6);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(dashboardMap);
+                dashboardMapLayer = L.layerGroup().addTo(dashboardMap);
+            }
+            dashboardMapLayer.clearLayers();
+            const points = [];
+            const trips = getSearchMatchedTrips().slice(0, 12);
+            trips.forEach((trip) => {
+                const origin = trip.origin || 'Addis Ababa';
+                const destination = Array.isArray(trip.destinations) && trip.destinations.length ? trip.destinations[0] : trip.destination;
+                const originPoint = cityCoords[origin];
+                const destinationPoint = cityCoords[destination];
+                if (originPoint) {
+                    points.push(originPoint);
+                    L.circleMarker(originPoint, { radius: 6, color: '#00499e', fillColor: '#00499e', fillOpacity: 0.85 })
+                        .addTo(dashboardMapLayer)
+                        .bindPopup(`<b>${clean(trip.vehicle_plate || trip.id)}</b><br>${clean(origin)}`);
+                }
+                if (destinationPoint) {
+                    points.push(destinationPoint);
+                    L.circleMarker(destinationPoint, { radius: 7, color: '#0e9849', fillColor: '#0e9849', fillOpacity: 0.85 })
+                        .addTo(dashboardMapLayer)
+                        .bindPopup(`<b>${clean(trip.vehicle_plate || trip.id)}</b><br>${clean(destination)}`);
+                }
+                if (originPoint && destinationPoint) {
+                    L.polyline([originPoint, destinationPoint], { color: '#00499e', weight: 3, opacity: 0.7 }).addTo(dashboardMapLayer);
+                }
+            });
+            if (points.length) dashboardMap.fitBounds(L.latLngBounds(points), { padding: [28, 28], maxZoom: 8 });
+            setTimeout(() => dashboardMap.invalidateSize(), 0);
+            $('map-side').innerHTML = trips.slice(0, 5).map((trip) => `
+                <a class="map-side-row" href="/map.html?journey_id=${encodeURIComponent(trip.id)}&vehicle=${encodeURIComponent(trip.vehicle_plate || trip.vehicle_id || trip.id)}" target="_blank">
+                    <div class="map-side-label">${clean(stateLabel(trip.status))} · ${clean(paymentLabel(trip))}</div>
+                    <div class="map-side-value">${clean(trip.vehicle_plate || trip.id)}</div>
+                    <div class="muted">${clean(trip.customer_name || 'Customer')} · ${clean(Array.isArray(trip.destinations) ? trip.destinations.join(', ') : trip.destination || 'Destination pending')}</div>
+                </a>
+            `).join('') || '<div class="empty">No map records.</div>';
         }
 
         function renderTripCards(targetId, trips) {
@@ -594,7 +1036,9 @@
                 const margin = revenue ? Math.round((profit / revenue) * 100) : 0;
                 const legs = Array.isArray(trip.trips) ? trip.trips : [];
                 const destinations = Array.isArray(trip.destinations) ? trip.destinations : [];
-                const origin = trip.origin || 'Addis Ababa HQ';
+                const journeyStart = trip.journey_start || 'TOP Factory';
+                const journeyEnd = trip.journey_end || 'TOP Factory';
+                const origin = trip.origin || journeyStart;
                 const destination = destinations[0] || (legs[0] && legs[0].destination) || 'Pending destination';
                 const totalDistance = legs.reduce((sum, leg) => sum + Number(leg.distance_km || 0), 0);
                 const seed = Number(String(trip.id || 0).slice(-4)) || 1;
@@ -602,51 +1046,97 @@
                 const speed = moving ? 58 + (seed % 24) : 0;
                 const fuel = 38 + (seed % 47);
                 const telemetryDistance = totalDistance || 420 + (seed % 900);
-                const visibleLegs = legs.length ? legs.slice(0, 3) : [{ origin, destination, distance_km: telemetryDistance, status: state }];
+                const visibleLegs = legs.length ? legs.slice(0, 3) : [{ origin, destination, distance_km: telemetryDistance, status: state, revenue: trip.total_revenue, expense: trip.total_expense }];
                 const tripId = String(trip.id || '');
                 const timelineId = `timeline-${targetId}-${tripId}`;
+                const payState = getPaymentState(trip);
+                const orders = getOrderCount(trip);
                 return `
                     <article class="trip-card">
                         <div class="trip-card-head">
-                            <div>
+                            <div class="trip-head-main">
                                 <div class="plate">${clean(trip.vehicle_plate || 'No plate')}</div>
-                                <div class="muted">${clean(trip.vehicle_brand || 'Fleet vehicle')}</div>
+                                <div class="muted">${clean(trip.customer_name || 'Customer not assigned')} · ${clean(trip.vehicle_brand || 'Fleet vehicle')}</div>
                             </div>
                             <span class="pill ${state}">${stateLabel(state)}</span>
                         </div>
-                        <div class="meta">
+                        <div class="trip-quick-grid mobile-only">
+                            <div class="quick-item"><div class="quick-label">Driver</div><div class="quick-value">${clean(trip.driver_name || 'Unassigned')}</div></div>
+                            <div class="quick-item"><div class="quick-label">Payment</div><div class="quick-value">${paymentLabel(trip)}</div></div>
+                            <div class="quick-item"><div class="quick-label">Departure</div><div class="quick-value">${clean(trip.departure_date || 'Not set')}</div></div>
+                            <div class="quick-item"><div class="quick-label">Trips</div><div class="quick-value">${clean(trip.trip_count || visibleLegs.length)}</div></div>
+                        </div>
+                        <div class="meta desktop-only">
+                            <div class="meta-row"><span class="muted">Customer</span><span class="meta-value">${clean(trip.customer_name || 'N/A')}</span></div>
                             <div class="meta-row"><span class="muted">Driver</span><span class="meta-value">${clean(trip.driver_name || 'Unassigned')}</span></div>
                             <div class="meta-row"><span class="muted">Departure</span><span class="meta-value">${clean(trip.departure_date || 'Not set')}</span></div>
+                            <div class="meta-row"><span class="muted">Payment</span><span class="meta-value">${paymentLabel(trip)}</span></div>
+                            <div class="meta-row"><span class="muted">Mayet</span><span class="meta-value">${clean(trip.mayet_status || 'No GPS cache')}</span></div>
+                            <div class="meta-row"><span class="muted">Trips Inside</span><span class="meta-value">${clean(trip.trip_count || visibleLegs.length)} trip${Number(trip.trip_count || visibleLegs.length) === 1 ? '' : 's'}</span></div>
                         </div>
                         <div class="route-panel">
                             <div class="route-line">
-                                <span class="route-stop">${clean(origin)}</span>
+                                <span class="route-stop">${clean(journeyStart)}</span>
                                 <span class="route-arrow">-></span>
                                 <span class="route-stop">${clean(destination)}</span>
+                                <span class="route-arrow">-></span>
+                                <span class="route-stop">${clean(journeyEnd)}</span>
                             </div>
-                            <div class="leg-list">
+                            <div class="leg-list desktop-only">
                                 ${visibleLegs.map((leg) => `
                                     <div class="leg-row">
                                         <span><strong>${clean(leg.origin || origin)}</strong> -> ${clean(leg.destination || destination)}</span>
-                                        <span>${clean(leg.distance_km || telemetryDistance)} km</span>
+                                        <span>${money(leg.revenue || 0)} / ${money(leg.expense || 0)}</span>
                                     </div>
                                 `).join('')}
                             </div>
                         </div>
-                        <div class="money">
+                        <div class="money desktop-only">
                             <div class="money-box"><div class="money-label">Revenue</div><div class="money-value green">${money(trip.total_revenue)}</div></div>
                             <div class="money-box"><div class="money-label">Expense</div><div class="money-value red">${money(trip.total_expense)}</div></div>
-                            <div class="money-box"><div class="money-label">Profit</div><div class="money-value ${profit >= 0 ? 'green' : 'red'}">${money(profit)}</div></div>
-                            <div class="money-box"><div class="money-label">Margin</div><div class="money-value ${margin >= 0 ? 'green' : 'red'}">${margin}%</div></div>
+                            <div class="money-box"><div class="money-label">Paid</div><div class="money-value green">${money(trip.paid_amount)}</div></div>
+                            <div class="money-box"><div class="money-label">Pending</div><div class="money-value amber">${money(trip.pending_payment)}</div></div>
+                            <div class="money-box"><div class="money-label">Status</div><div class="money-value ${payState === 'paid' ? 'green' : payState === 'pending' ? 'red' : 'amber'}">${paymentLabel(trip)}</div></div>
+                            <div class="money-box"><div class="money-label">Trips</div><div class="money-value blue">${clean(trip.trip_count || visibleLegs.length)}</div></div>
                         </div>
-                        <div class="telemetry">
+                        <div class="money mobile-money mobile-only">
+                            <div class="money-box"><div class="money-label">Profit</div><div class="money-value ${profit >= 0 ? 'green' : 'red'}">${money(profit)} · ${margin}%</div></div>
+                            <div class="money-box"><div class="money-label">Revenue</div><div class="money-value green">${money(trip.total_revenue)}</div></div>
+                            <div class="money-box"><div class="money-label">Expense</div><div class="money-value red">${money(trip.total_expense)}</div></div>
+                        </div>
+                        <div class="telemetry desktop-only">
                             <div class="telemetry-box"><div class="telemetry-label">Speed</div><div class="telemetry-value">${speed} km/h</div></div>
                             <div class="telemetry-box"><div class="telemetry-label">Fuel</div><div class="telemetry-value">${fuel}%</div></div>
                             <div class="telemetry-box"><div class="telemetry-label">Distance</div><div class="telemetry-value">${telemetryDistance} km</div></div>
                         </div>
+                        <details class="trip-more mobile-only">
+                            <summary>More details</summary>
+                            <div class="trip-more-body">
+                                <div class="meta">
+                                    <div class="meta-row"><span class="muted">Customer</span><span class="meta-value">${clean(trip.customer_name || 'N/A')}</span></div>
+                                    <div class="meta-row"><span class="muted">Mayet</span><span class="meta-value">${clean(trip.mayet_status || 'No GPS cache')}</span></div>
+                                    <div class="meta-row"><span class="muted">Paid</span><span class="meta-value">${money(trip.paid_amount)}</span></div>
+                                    <div class="meta-row"><span class="muted">Pending</span><span class="meta-value">${money(trip.pending_payment)}</span></div>
+                                </div>
+                                <div class="leg-list">
+                                    ${visibleLegs.map((leg) => `
+                                        <div class="leg-row">
+                                            <span><strong>${clean(leg.origin || origin)}</strong> -> ${clean(leg.destination || destination)}</span>
+                                            <span>${money(leg.revenue || 0)} / ${money(leg.expense || 0)}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                <div class="telemetry">
+                                    <div class="telemetry-box"><div class="telemetry-label">Speed</div><div class="telemetry-value">${speed} km/h</div></div>
+                                    <div class="telemetry-box"><div class="telemetry-label">Fuel</div><div class="telemetry-value">${fuel}%</div></div>
+                                    <div class="telemetry-box"><div class="telemetry-label">Distance</div><div class="telemetry-value">${telemetryDistance} km</div></div>
+                                </div>
+                            </div>
+                        </details>
                         <div class="card-actions">
-                            <button class="btn primary" onclick="toggleTimeline(${JSON.stringify(targetId)}, ${JSON.stringify(tripId)})">View Timeline</button>
-                            <a class="btn" href="/map.html?journey_id=${encodeURIComponent(tripId)}" target="_blank">View Map</a>
+                            <a class="btn primary" href="/detail.html?journey_id=${encodeURIComponent(tripId)}"><i data-lucide="panel-right-open" class="icon"></i>Detail</a>
+                            <a class="btn" href="/map.html?journey_id=${encodeURIComponent(tripId)}&vehicle=${encodeURIComponent(trip.vehicle_plate || trip.vehicle_id || tripId)}" target="_blank"><i data-lucide="map" class="icon"></i>Map</a>
+                            <button class="btn" type="button" data-timeline-target="${clean(targetId)}" data-timeline-trip="${clean(tripId)}"><i data-lucide="history" class="icon"></i>Timeline</button>
                         </div>
                         <div class="timeline-panel" id="${clean(timelineId)}"></div>
                     </article>
@@ -683,8 +1173,13 @@
                 const destination = Array.isArray(trip.destinations) && trip.destinations.length ? trip.destinations[0] : 'Pending destination';
                 return [{
                     timestamp: trip.departure_date || '',
-                    location: trip.origin || 'Addis Ababa HQ',
-                    note: `Route opened toward ${destination}`,
+                    location: trip.journey_start || trip.origin || 'TOP Factory',
+                    note: `Journey opened toward ${destination}`,
+                    source: 'Dashboard',
+                }, {
+                    timestamp: trip.return_date || '',
+                    location: trip.journey_end || 'TOP Factory',
+                    note: `Return to ${trip.journey_end || 'TOP Factory'} pending`,
                     source: 'Dashboard',
                 }];
             }
@@ -692,8 +1187,8 @@
             return legs.flatMap((leg) => {
                 const entries = [{
                     timestamp: leg.departure_date || trip.departure_date || '',
-                    location: leg.origin || trip.origin || 'Addis Ababa HQ',
-                    note: `Departed toward ${leg.destination || 'destination'}`,
+                    location: leg.origin || trip.origin || 'TOP Factory',
+                    note: `Trip leg toward ${leg.destination || 'destination'} · Revenue ${money(leg.revenue || 0)} · Expense ${money(leg.expense || 0)}`,
                     source: 'Odoo',
                 }];
                 if (leg.arrival_date) {
@@ -705,7 +1200,12 @@
                     });
                 }
                 return entries;
-            });
+            }).concat([{
+                timestamp: trip.return_date || '',
+                location: trip.journey_end || 'TOP Factory',
+                note: `Journey ends when vehicle returns to ${trip.journey_end || 'TOP Factory'}`,
+                source: 'Dashboard',
+            }]);
         }
 
         function renderTimelinePanel(panel, entries) {
@@ -734,22 +1234,28 @@
 
         function renderTrips() {
             const filtered = getFilteredTrips();
-            $('trips-title').textContent = statusFilter === 'active' ? 'Active Trips' : 'Trips';
+            $('search-meta').textContent = `${getSearchMatchedTrips().length} of ${allTrips.length} shown`;
+            $('trips-title').textContent = statusFilter === 'active' ? 'Active Journeys' : 'Journeys';
             renderTripCards('trip-list', filtered);
             renderTripCards('dashboard-active', getSearchMatchedTrips().filter((trip) => ['available', 'assigned', 'dispatched'].includes(normalizeState(trip.status))).slice(0, 6));
         }
 
         function renderDashboardOverview() {
             const searchedTrips = getSearchMatchedTrips();
-            const revenue = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
-            const expense = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
+            const payment = dashboardData.payment_summary || {};
+            const revenue = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0) || Number(payment.receivable_total || 0);
+            const expense = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0) || Number(payment.expense_total || 0);
             const profit = revenue - expense;
-            renderTable('recent-trip-table', ['Vehicle', 'Driver', 'Route', 'State'], searchedTrips.slice(0, 8).map((trip) => {
+            renderTable('recent-trip-table', ['Vehicle', 'Customer', 'Driver', 'Route', 'Mayet', 'Payment', 'Orders', 'State'], searchedTrips.slice(0, 8).map((trip) => {
                 const destinations = Array.isArray(trip.destinations) ? trip.destinations.join(', ') : 'Pending';
                 return [
                     trip.vehicle_plate || trip.id,
+                    trip.customer_name || 'N/A',
                     trip.driver_name || 'Unassigned',
                     destinations || trip.origin || 'Pending',
+                    trip.mayet_status || 'No cache',
+                    paymentLabel(trip),
+                    getOrderCount(trip),
                     stateLabel(trip.status),
                 ];
             }));
@@ -774,6 +1280,8 @@
             $('financial-summary').innerHTML = [
                 ['Confirmed Receivables', money(revenue), 'green'],
                 ['Approved Expenses', money(expense), 'red'],
+                ['Customer Paid', money(payment.customer_paid_total || 0), 'green'],
+                ['Customer Pending', money(payment.customer_pending_total || 0), 'red'],
                 ['Net Profit', money(profit), profit >= 0 ? 'green' : 'red'],
                 ['Profit Margin', `${revenue ? Math.round((profit / revenue) * 100) : 0}%`, profit >= 0 ? 'green' : 'red'],
             ].map(([label, value, tone]) => `
@@ -803,26 +1311,94 @@
 
         function renderPayments() {
             const searchedTrips = getSearchMatchedTrips();
-            const revenue = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0);
-            const expense = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0);
+            const payment = dashboardData.payment_summary || {};
+            const revenue = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_revenue || 0), 0) || Number(payment.receivable_total || 0);
+            const expense = searchedTrips.reduce((sum, trip) => sum + Number(trip.total_expense || 0), 0) || Number(payment.expense_total || 0);
             const profit = revenue - expense;
             $('payment-grid').innerHTML = [
                 ['Confirmed Receivables', money(revenue), 'green'],
-                ['Approved Payment Requests', money(expense), 'red'],
+                ['Customer Paid', money(payment.customer_paid_total || 0), 'green'],
+                ['Customer Pending', money(payment.customer_pending_total || 0), 'red'],
+                ['Vendor Paid', money(payment.vendor_paid_total || 0), 'green'],
+                ['Vendor Pending', money(payment.vendor_pending_total || 0), 'amber'],
                 ['Income Statement Profit', money(profit), profit >= 0 ? 'green' : 'red'],
-                ['Receivable Count', searchedTrips.length, ''],
-                ['Payment Request Count', searchedTrips.length, ''],
-                ['Pending Expense Total', money(expense * 0.18), 'red'],
             ].map(([label, value, tone]) => `
                 <div class="card"><div class="card-label">${label}</div><div class="card-value ${tone}">${value}</div></div>
             `).join('');
-            renderTable('payment-table', ['Trip', 'Customer', 'Receivable', 'Payment Request', 'Profit'], searchedTrips.map((trip) => [
+            renderTable('payment-table', ['Trip', 'Customer', 'Payment Status', 'Vehicle Orders', 'Receivable', 'Paid', 'Pending', 'Vendor Pending', 'Profit'], searchedTrips.map((trip) => [
                 trip.vehicle_plate || trip.id,
-                trip.driver_name || 'Customer',
+                trip.customer_name || trip.driver_name || 'Customer',
+                paymentLabel(trip),
+                getOrderCount(trip),
                 money(trip.total_revenue),
-                money(trip.total_expense),
+                money(trip.paid_amount),
+                money(trip.pending_payment),
+                money(trip.pending_expense_payment),
                 money(Number(trip.total_revenue || 0) - Number(trip.total_expense || 0)),
             ]));
+        }
+
+        function renderGraphs() {
+            const stateCounts = {
+                draft: 0,
+                available: 0,
+                assigned: 0,
+                dispatched: 0,
+                done: 0,
+                cancelled: 0,
+            };
+            allTrips.forEach((trip) => {
+                const state = normalizeState(trip.status);
+                if (stateCounts[state] !== undefined) stateCounts[state] += 1;
+            });
+            if (Array.isArray(dashboardData.journeys_by_status)) {
+                dashboardData.journeys_by_status.forEach((item) => {
+                    const state = normalizeState(item.state || item.status);
+                    if (stateCounts[state] !== undefined && item.count > stateCounts[state]) {
+                        stateCounts[state] = Number(item.count || 0);
+                    }
+                });
+            }
+            const maxState = Math.max(1, ...Object.values(stateCounts));
+            $('workflow-graph').innerHTML = `
+                <div class="workflow">
+                    ${Object.entries(stateCounts).map(([state, count]) => `
+                        <button type="button" class="workflow-step ${count ? 'active' : ''}" data-open-view="trips" data-status="${clean(state)}">
+                            <div class="workflow-label">${clean(stateLabel(state))}</div>
+                            <div class="workflow-value">${count}</div>
+                        </button>
+                    `).join('')}
+                </div>
+            `;
+
+            const payment = dashboardData.payment_summary || {};
+            const paymentRows = [
+                ['Customer Paid', payment.customer_paid_total || 0, payment.receivable_total || 0, 'green'],
+                ['Customer Pending', payment.customer_pending_total || 0, payment.receivable_total || 0, 'red'],
+                ['Vendor Paid', payment.vendor_paid_total || 0, payment.payment_request_total || payment.expense_total || 0, 'green'],
+                ['Vendor Pending', payment.vendor_pending_total || 0, payment.payment_request_total || payment.expense_total || 0, 'amber'],
+            ];
+            $('payment-chart').innerHTML = `
+                <div class="bar-list">
+                    ${paymentRows.map(([label, value, total, tone]) => `
+                        <button type="button" class="bar-row" data-open-view="payments">
+                            <div class="bar-head"><span>${clean(label)}</span><strong>${money(value)}</strong></div>
+                            <div class="bar-track"><div class="bar-fill ${tone}" style="width: ${percentOf(value, total)}%"></div></div>
+                        </button>
+                    `).join('')}
+                </div>
+            `;
+
+            $('status-chart').innerHTML = `
+                <div class="bar-list">
+                    ${Object.entries(stateCounts).map(([state, count]) => `
+                        <button type="button" class="bar-row" data-open-view="trips" data-status="${clean(state)}">
+                            <div class="bar-head"><span>${clean(stateLabel(state))}</span><strong>${count}</strong></div>
+                            <div class="bar-track"><div class="bar-fill" style="width: ${percentOf(count, maxState)}%"></div></div>
+                        </button>
+                    `).join('')}
+                </div>
+            `;
         }
 
         function renderSupervisors() {
@@ -866,15 +1442,26 @@
 
         function renderAll() {
             renderStats();
+            renderAnalyticsStrip();
+            renderGraphs();
             renderTrips();
             renderDashboardOverview();
             renderLocations();
             renderPayments();
             renderSupervisors();
             renderReports();
+            refreshIcons();
         }
 
         function openView(view, nextStatus) {
+            if (view === 'reports') {
+                window.location.href = '/report.html';
+                return;
+            }
+            if (view === 'payments') {
+                window.location.href = '/report.html#payment-requests';
+                return;
+            }
             currentView = view;
             if (nextStatus) {
                 statusFilter = nextStatus;
@@ -901,10 +1488,26 @@
         $('nav').addEventListener('click', (event) => {
             const button = event.target.closest('button[data-view]');
             if (!button) return;
+            if (button.dataset.view === 'reports') {
+                window.location.href = '/report.html';
+                return;
+            }
+            if (button.dataset.view === 'payments') {
+                window.location.href = '/report.html#payment-requests';
+                return;
+            }
             openView(button.dataset.view, button.dataset.status);
         });
-        document.querySelectorAll('[data-open-view]').forEach((button) => {
-            button.addEventListener('click', () => openView(button.dataset.openView, button.dataset.status));
+        document.addEventListener('click', (event) => {
+            const timelineButton = event.target.closest('[data-timeline-trip]');
+            if (timelineButton) {
+                event.preventDefault();
+                toggleTimeline(timelineButton.dataset.timelineTarget, timelineButton.dataset.timelineTrip);
+                return;
+            }
+            const button = event.target.closest('[data-open-view]');
+            if (!button) return;
+            openView(button.dataset.openView, button.dataset.status);
         });
         $('menu-btn').addEventListener('click', () => {
             if (window.innerWidth <= 860) {
@@ -921,12 +1524,24 @@
             localStorage.setItem('fleetDashboardMode', currentMode);
             loadDashboard();
         });
+        $('theme-toggle').addEventListener('click', () => {
+            currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('fleetTheme', currentTheme);
+            applyTheme();
+        });
         $('status-select').addEventListener('change', (event) => {
             statusFilter = event.target.value;
             renderTrips();
         });
         $('global-search').addEventListener('input', renderAll);
+        document.querySelectorAll('[data-search-chip]').forEach((button) => {
+            button.addEventListener('click', () => {
+                $('global-search').value = button.dataset.searchChip;
+                renderAll();
+            });
+        });
 
+        applyTheme();
         loadDashboard();
     </script>
 </body>

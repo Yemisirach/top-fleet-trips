@@ -3,171 +3,490 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Journey Route Map</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <title>Fleet Trips - Visual Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-        .header { background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%); padding: 20px 40px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
-        .header h1 { font-size: 24px; font-weight: 700; }
-        .header a { color: #60a5fa; text-decoration: none; font-size: 14px; }
-        .container { max-width: 1400px; margin: 0 auto; padding: 30px 40px; display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
-        @media (max-width: 768px) { .container { grid-template-columns: 1fr; padding: 15px; } }
-        .panel { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; }
-        .panel h2 { font-size: 18px; margin-bottom: 16px; color: #e2e8f0; }
-        .route-stop { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #334155; }
-        .route-stop:last-child { border-bottom: none; }
-        .stop-dot { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
-        .stop-dot.start { background: #34d399; }
-        .stop-dot.mid { background: #fbbf24; }
-        .stop-dot.end { background: #f87171; }
-        .stop-info { flex: 1; }
-        .stop-name { font-weight: 600; }
-        .stop-meta { font-size: 13px; color: #94a3b8; }
-        #map { height: 600px; border-radius: 12px; border: 1px solid #334155; }
-        .loading { text-align: center; padding: 40px; color: #94a3b8; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #f8fafc; --panel: #ffffff; --panel-2: #f4f8fd; --line: #d9e2ef; --text: #0f172a; --muted: #64748b;
+            --primary: #00499e; --secondary: #0e9849; --primary-soft: #eaf4ff; --secondary-soft: #e9f9f0; --red: #dc2626; --amber: #f59e0b;
+        }
+        body.dark { --bg: #0f172a; --panel: #111827; --panel-2: #162033; --line: #253244; --text: #e5e7eb; --muted: #94a3b8; --primary-soft: #0f2747; --secondary-soft: #0d2e1c; }
+        body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        .topbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+        .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .brand img { width: 40px; height: 40px; border-radius: 8px; background: #fff; }
+        .title { font-size: 20px; font-weight: 900; }
+        .subtitle { color: var(--muted); font-size: 13px; margin-top: 2px; }
+        .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .btn { min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); padding: 8px 12px; text-decoration: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+        .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+        .icon { width: 18px; height: 18px; stroke-width: 2; }
+        .page { max-width: 1480px; margin: 0 auto; padding: 24px; display: grid; grid-template-columns: 390px minmax(0, 1fr); gap: 16px; }
+        .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+        .panel-header { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+        .panel-title { font-weight: 900; }
+        .panel-body { padding: 16px; display: grid; gap: 10px; }
+        .state-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .state-box { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 10px; min-width: 0; }
+        .state-label { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+        .state-value { font-weight: 900; margin-top: 4px; overflow-wrap: anywhere; }
+        .vehicle-search { display: grid; gap: 8px; }
+        .search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+        .input { width: 100%; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); padding: 8px 10px; font: inherit; }
+        .selected-vehicle { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 12px; display: grid; gap: 10px; }
+        .selected-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .selected-name { font-size: 18px; font-weight: 900; overflow-wrap: anywhere; }
+        .selected-speed { min-width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center; background: var(--primary); color: #fff; font-weight: 900; }
+        .selected-meta { display: grid; gap: 8px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+        .legend { display: grid; gap: 8px; }
+        .legend-row { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .legend-dot.online { background: var(--secondary); }
+        .legend-dot.offline { background: var(--red); }
+        .legend-dot.ack { background: var(--amber); }
+        .legend-dot.odoo { background: var(--primary); }
+        .row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+        .history-list { display: grid; gap: 8px; }
+        .history-item { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 10px; }
+        .history-title { font-weight: 900; font-size: 13px; }
+        .history-meta { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.4; }
+        .label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+        .green { color: var(--secondary); } .red { color: var(--red); } .amber { color: var(--amber); }
+        .map-stack { display: grid; min-height: calc(100vh - 260px); }
+        #map { min-height: 420px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+        .mayet-panel { grid-column: 1 / -1; display: grid; gap: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+        .mayet-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+        .mayet-copy { min-width: 0; }
+        .mayet-title { font-weight: 900; }
+        .mayet-subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mayet-body { padding: 14px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+        .mayet-note { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.45; }
+        .empty { padding: 32px 16px; color: var(--muted); text-align: center; }
+        @media (max-width: 980px) { .page { grid-template-columns: 1fr; } .map-stack { min-height: auto; } #map { min-height: 520px; } .mayet-body { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 560px) { .topbar { align-items: flex-start; flex-direction: column; padding: 16px; } .page { padding: 16px; } .row, .state-strip, .mayet-body, .search-row { grid-template-columns: 1fr; } .mayet-header { align-items: flex-start; flex-direction: column; } }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>🗺️ Journey Route</h1>
-        <a href="/">← Back to Dashboard</a>
-    </div>
-    <div class="container">
-        <div class="panel" id="route-panel">
-            <div class="loading">Loading journey...</div>
+    <header class="topbar">
+        <div class="brand">
+            <img src="/static/fleet-trips-logo.svg" alt="Fleet Trips">
+            <div>
+                <div class="title">Visual Trip View</div>
+                <div class="subtitle" id="subtitle">DB route and Mayet GPS comparison</div>
+            </div>
         </div>
-        <div id="map"></div>
-    </div>
+        <div class="actions">
+            <a class="btn" href="/"><i data-lucide="layout-dashboard" class="icon"></i>Dashboard</a>
+            <a class="btn" id="detail-link" href="/detail.html"><i data-lucide="panel-right-open" class="icon"></i>Detail</a>
+            <a class="btn primary" href="https://mayetgps.com/" target="_blank" rel="noreferrer"><i data-lucide="satellite" class="icon"></i>Mayet</a>
+            <button class="btn" id="theme-toggle" type="button"><i data-lucide="moon" class="icon"></i><span id="theme-label">Dark</span></button>
+        </div>
+    </header>
+
+    <main class="page">
+        <div class="mayet-panel">
+            <div class="mayet-header">
+                <div class="mayet-copy">
+                    <div class="mayet-title">Mayet Live GPS</div>
+                    <div class="mayet-subtitle" id="mayet-subtitle">Live vehicle status from the Fleet Mayet cache.</div>
+                </div>
+                <a class="btn primary" id="mayet-direct-link" href="https://mayetgps.com/" target="_blank" rel="noreferrer"><i data-lucide="external-link" class="icon"></i>Open Mayet</a>
+            </div>
+            <div class="mayet-body" id="mayet-body">
+                <div class="mayet-note">Loading Mayet GPS status...</div>
+            </div>
+        </div>
+        <aside class="panel">
+            <div class="panel-header"><div class="panel-title">Location Audit</div></div>
+            <div class="panel-body">
+                <div class="vehicle-search">
+                    <div class="label">Selected Vehicle</div>
+                    <div class="search-row">
+                        <input class="input" id="vehicle-search-input" placeholder="Search plate or Mayet vehicle" autocomplete="off">
+                        <button class="btn primary" id="vehicle-search-button" type="button"><i data-lucide="search" class="icon"></i>Search</button>
+                    </div>
+                </div>
+                <div id="audit-panel"><div class="empty">Loading...</div></div>
+            </div>
+        </aside>
+        <section class="map-stack">
+            <div id="map"></div>
+        </section>
+    </main>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const journeyId = urlParams.get('journey_id');
         const API_BASE = '/api';
-
-        // Approximate coordinates for demo cities ( lat, lon )
+        const params = new URLSearchParams(window.location.search);
+        const tripId = params.get('journey_id') || params.get('trip_id');
+        const vehicleParam = params.get('vehicle') || params.get('plate') || params.get('search');
+        let currentTheme = localStorage.getItem('fleetTheme') || 'light';
+        let map;
+        let activeTrip = null;
         const cityCoords = {
-            "Topwater Ethiopia HQ, Addis Ababa": [9.0054, 38.7636],
-            "Dire Dawa": [9.6076, 41.8667],
-            "Bahir Dar": [11.5926, 37.3840],
-            "Mekelle": [13.5034, 39.4753],
-            "Hawassa": [7.0621, 38.4764],
-            "Adama": [8.5411, 39.2682],
-            "Jimma": [7.6805, 36.8324],
-            "Arba Minch": [6.0389, 37.5509],
-            "Jijiga": [9.3588, 42.7879],
-            "Nekemte": [9.0908, 36.5475],
-            "Djibouti City": [11.5721, 43.1456],
-            "Nairobi": [-1.2921, 36.8219],
-            "Mombasa": [-4.0435, 39.6682],
-            "Khartoum": [15.5007, 32.5599],
-            "Kampala": [0.3136, 32.5818],
-            "Moyale": [3.5223, 39.0611],
-            "Gondar": [12.6030, 37.4521],
-            "Axum": [14.1326, 38.7199],
-            "Lalibela": [12.0355, 39.0463],
-            "Harar": [9.3139, 42.1241],
-            "Sodo": [6.8602, 37.7618],
+            "Topwater Ethiopia HQ, Addis Ababa": [9.0054, 38.7636], "Addis Ababa": [9.0054, 38.7636], "Dire Dawa": [9.6076, 41.8667],
+            "Bahir Dar": [11.5926, 37.3840], "Mekelle": [13.5034, 39.4753], "Hawassa": [7.0621, 38.4764], "Adama": [8.5411, 39.2682],
+            "Jimma": [7.6805, 36.8324], "Arba Minch": [6.0389, 37.5509], "Jijiga": [9.3588, 42.7879], "Nekemte": [9.0908, 36.5475],
+            "Djibouti City": [11.5721, 43.1456], "Nairobi": [-1.2921, 36.8219], "Mombasa": [-4.0435, 39.6682], "Khartoum": [15.5007, 32.5599],
+            "Kampala": [0.3136, 32.5818], "Moyale": [3.5223, 39.0611], "Gondar": [12.6030, 37.4521], "Axum": [14.1326, 38.7199],
+            "Lalibela": [12.0355, 39.0463], "Harar": [9.3139, 42.1241], "Sodo": [6.8602, 37.7618],
         };
-
-        async function loadJourney() {
-            if (!journeyId) return showError("No journey ID provided");
-            try {
-                const res = await fetch(`${API_BASE}/journeys/${journeyId}`);
-                if (!res.ok) throw new Error(await res.text());
-                const j = await res.json();
-                renderRoute(j);
-                renderMap(j);
-            } catch (e) {
-                showError("Failed to load journey: " + e.message);
-            }
+        const clean = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+        const money = (value) => new Intl.NumberFormat('en-ET', { style: 'currency', currency: 'ETB', maximumFractionDigits: 0 }).format(Number(value || 0));
+        function refreshIcons() { if (window.lucide) window.lucide.createIcons(); }
+        function normalizeState(status) {
+            const raw = String(status || 'draft').toLowerCase();
+            const map = { planned: 'available', in_progress: 'dispatched', completed: 'done', cancel: 'cancelled', canceled: 'cancelled' };
+            return map[raw] || raw;
         }
-
-        function renderRoute(j) {
-            const panel = document.getElementById('route-panel');
-            const stops = [];
-            if (j.trips && j.trips.length > 0) {
-                j.trips.forEach((trip, idx) => {
-                    stops.push({
-                        name: trip.origin,
-                        date: trip.departure_date,
-                        type: 'start'
-                    });
-                    if (idx === j.trips.length - 1) {
-                        stops.push({
-                            name: trip.destination,
-                            date: trip.arrival_date || 'Pending',
-                            type: 'end'
-                        });
-                    }
-                });
-            } else {
-                stops.push({ name: j.origin, date: j.departure_date, type: 'start' });
-                stops.push({ name: j.destinations?.[0] ?? 'Unknown', date: j.return_date, type: 'end' });
+        function stateLabel(status) {
+            return normalizeState(status).replace('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+        }
+        function getPaymentState(trip) {
+            const pendingCustomer = Number(trip.pending_payment || 0);
+            const paidCustomer = Number(trip.paid_amount || 0);
+            const pendingVendor = Number(trip.pending_expense_payment || 0);
+            if (pendingCustomer <= 0 && pendingVendor <= 0 && (paidCustomer > 0 || Number(trip.total_revenue || 0) > 0)) return 'paid';
+            if (paidCustomer > 0 && pendingCustomer > 0) return 'partial';
+            if (pendingCustomer > 0 || pendingVendor > 0) return 'pending';
+            return 'open';
+        }
+        function paymentLabel(trip) {
+            const labels = { paid: 'Paid', partial: 'Partial', pending: 'Pending', open: 'Open' };
+            return labels[getPaymentState(trip)] || 'Open';
+        }
+        function getOrderCount(trip) {
+            const legCount = Array.isArray(trip.trips) ? trip.trips.length : 0;
+            return Number(trip.order_count || trip.order_receivable_count || trip.payment_request_count || legCount || 1);
+        }
+        function firstPlateNumber(value) {
+            const match = String(value || '').match(/\d+/);
+            return match ? match[0].replace(/^0+/, '') || match[0] : String(value || '');
+        }
+        function vehicleRefFromTrip(trip) {
+            return vehicleParam || (trip && (trip.vehicle_plate || trip.vehicle_id || trip.id)) || '';
+        }
+        function setVehicleSearch(value) {
+            const input = document.getElementById('vehicle-search-input');
+            if (input) input.value = value || '';
+        }
+        function buildMayetUrl(baseUrl, trip) {
+            const url = new URL(baseUrl || 'https://mayetgps.com/', window.location.href);
+            const vehicleRef = firstPlateNumber(trip.vehicle_plate || trip.vehicle_id || trip.id || '');
+            if (vehicleRef) {
+                url.searchParams.set('vehicle', vehicleRef);
+                url.searchParams.set('search', vehicleRef);
             }
-
-            panel.innerHTML = `
-                <h2>📋 Route Details</h2>
-                <div class="info-row" style="margin-bottom: 15px;">
-                    <span style="color:#94a3b8;">Vehicle:</span> <strong>${j.vehicle_plate}</strong> | Driver: ${j.driver_name}
-                </div>
-                ${stops.map((s, i) => `
-                    <div class="route-stop">
-                        <div class="stop-dot ${s.type}"></div>
-                        <div class="stop-info">
-                            <div class="stop-name">${s.name}</div>
-                            <div class="stop-meta">${s.date || 'Pending'}</div>
-                        </div>
-                    </div>
-                `).join('')}
-                <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #334155;">
-                    <div style="display: flex; justify-content: space-between; font-size: 14px;">
-                        <span style="color:#94a3b8;">Revenue:</span> <span style="color:#34d399;">${formatMoney(j.total_revenue)}</span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; font-size: 14px; margin-top: 5px;">
-                        <span style="color:#94a3b8;">Expense:</span> <span style="color:#f87171;">${formatMoney(j.total_expense)}</span>
-                    </div>
-                </div>
+            return url.toString();
+        }
+        function applyTheme() {
+            document.body.classList.toggle('dark', currentTheme === 'dark');
+            document.getElementById('theme-toggle').innerHTML = `<i data-lucide="${currentTheme === 'dark' ? 'sun' : 'moon'}" class="icon"></i><span id="theme-label">${currentTheme === 'dark' ? 'Light' : 'Dark'}</span>`;
+            refreshIcons();
+        }
+        async function fetchJson(url) {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(await response.text());
+            return response.json();
+        }
+        function initMap() {
+            if (map) {
+                map.remove();
+                map = null;
+            }
+            map = L.map('map').setView([9.0054, 38.7636], 6);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+            return map;
+        }
+        function gpsTone(status) {
+            const value = String(status || '').toLowerCase();
+            if (value.includes('online')) return '#0e9849';
+            if (value.includes('offline')) return '#dc2626';
+            if (value.includes('ack')) return '#f59e0b';
+            return '#00499e';
+        }
+        function normalizePlace(value) {
+            return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        }
+        function resolveCityCoords(value) {
+            if (!value) return null;
+            if (cityCoords[value]) return cityCoords[value];
+            const normalized = normalizePlace(value);
+            if (!normalized) return null;
+            const direct = Object.entries(cityCoords).find(([name]) => normalizePlace(name) === normalized);
+            if (direct) return direct[1];
+            const contains = Object.entries(cityCoords).find(([name]) => {
+                const city = normalizePlace(name);
+                return city && (normalized.includes(city) || city.includes(normalized));
+            });
+            if (contains) return contains[1];
+            if (normalized.includes('topwater') || normalized.includes('top factory')) return cityCoords['Addis Ababa'];
+            return null;
+        }
+        function readLatLng(source) {
+            const lat = Number(source && (source.latitude ?? source.lat));
+            const lng = Number(source && (source.longitude ?? source.lng ?? source.lon));
+            return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+        }
+        function gpsFromTrip(trip) {
+            if (!trip || trip.mayet_latitude == null || trip.mayet_longitude == null) return null;
+            return {
+                plate: trip.vehicle_plate || trip.vehicle_id || trip.id,
+                latitude: trip.mayet_latitude,
+                longitude: trip.mayet_longitude,
+                location: trip.mayet_status,
+                captured_at: trip.mayet_captured_at,
+            };
+        }
+        async function loadTrip() {
+            if (!tripId && vehicleParam) return loadSelectedVehicle(vehicleParam);
+            if (!tripId) return loadFleetMap();
+            const mode = localStorage.getItem('fleetDashboardMode') || 'live';
+            let trip = null;
+            try {
+                const data = await fetchJson(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(mode)}`);
+                trip = (data.recent_journeys || []).find((item) => String(item.id) === String(tripId));
+            } catch (error) {}
+            if (!trip) {
+                try { trip = await fetchJson(`${API_BASE}/journeys/${encodeURIComponent(tripId)}`); } catch (error) {}
+            }
+            if (!trip) return showError('Trip not found in the selected data source.');
+            activeTrip = trip;
+            document.getElementById('detail-link').href = `/detail.html?journey_id=${encodeURIComponent(trip.id)}`;
+            const vehicleRef = vehicleRefFromTrip(trip);
+            setVehicleSearch(vehicleRef);
+            const gpsPayload = await loadGps(vehicleRef);
+            renderAudit(trip, gpsPayload);
+            renderMap(trip, gpsPayload);
+            loadVehicleHistory(vehicleRef);
+        }
+        async function loadSelectedVehicle(vehicleRef) {
+            const trip = { id: vehicleRef, vehicle_plate: vehicleRef, status: 'tracking', origin: null, destinations: [] };
+            activeTrip = trip;
+            setVehicleSearch(vehicleRef);
+            document.getElementById('detail-link').href = '/';
+            const gpsPayload = await loadGps(vehicleRef);
+            renderAudit(trip, gpsPayload);
+            renderMap(trip, gpsPayload);
+            loadVehicleHistory(vehicleRef);
+            // Update Mayet panel for selected vehicle
+            const gps = gpsPayload && gpsPayload.gps;
+            const statusText = gps ? (gps.location || 'Cached') : 'Waiting for Mayet GPS cache';
+            document.getElementById('mayet-subtitle').textContent = `${vehicleRef} · ${statusText}`;
+            document.getElementById('mayet-body').innerHTML = `
+                <div class="state-box"><div class="state-label">Selected Vehicle</div><div class="state-value">${clean(vehicleRef)}</div></div>
+                <div class="state-box"><div class="state-label">GPS Status</div><div class="state-value ${gps ? 'green' : 'amber'}">${statusText}</div></div>
+                <div class="state-box"><div class="state-label">Speed</div><div class="state-value">${gps && gps.speed != null ? gps.speed + ' km/h' : 'N/A'}</div></div>
+                <div class="state-box"><div class="state-label">Captured</div><div class="state-value">${gps && gps.captured_at ? gps.captured_at : 'N/A'}</div></div>
+                <div class="mayet-note">Live GPS is shown from the Mayet worker cache. Use Open Mayet for direct authenticated inspection in Mayet.</div>
             `;
         }
-
-        function renderMap(j) {
-            const map = L.map('map').setView([9.0, 38.76], 6);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
-            }).addTo(map);
-
+        async function loadFleetMap() {
+            const mode = localStorage.getItem('fleetDashboardMode') || 'live';
+            const [dashboard, catalog] = await Promise.all([
+                fetchJson(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(mode)}`).catch(() => ({ recent_journeys: [] })),
+                fetchJson(`${API_BASE}/dashboard/mayet/vehicles`).catch(() => ({ vehicles: [] })),
+            ]);
+            const trips = Array.isArray(dashboard.recent_journeys) ? dashboard.recent_journeys : [];
+            const vehicles = Array.isArray(catalog.vehicles) ? catalog.vehicles : [];
+            renderFleetAudit(trips, vehicles, catalog);
+            renderFleetMap(trips, vehicles);
+        }
+        async function loadGps(vehicleRef) {
+            try { return await fetchJson(`${API_BASE}/dashboard/gps/${encodeURIComponent(vehicleRef || '')}`); }
+            catch (error) { return { gps: null, message: 'GPS lookup unavailable.' }; }
+        }
+        async function loadVehicleHistory(vehicleRef) {
+            const target = document.getElementById('vehicle-history');
+            if (!target) return;
+            target.innerHTML = '<div class="empty">Loading vehicle history...</div>';
+            try {
+                const data = await fetchJson(`${API_BASE}/dashboard/vehicle-history/${encodeURIComponent(vehicleRef || '')}`);
+                const rows = Array.isArray(data.history) ? data.history : [];
+                if (!rows.length) {
+                    target.innerHTML = '<div class="empty">No Odoo trip history found for this vehicle.</div>';
+                    return;
+                }
+                target.innerHTML = rows.map((row) => `
+                    <div class="history-item">
+                        <div class="history-title">${clean(row.name || row.id)} · ${clean(stateLabel(row.state))}</div>
+                        <div class="history-meta">${clean(row.departure_name || 'Departure')} -> ${clean(row.destination_name || 'Destination')}<br>${clean(row.departure_date || 'No date')} · ${clean(row.driver_name || 'Unassigned')}</div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                target.innerHTML = '<div class="empty">Vehicle history unavailable.</div>';
+            }
+        }
+        function getDbLocation(trip) {
+            return trip.current_location || trip.current_location_note || (Array.isArray(trip.destinations) ? trip.destinations[0] : trip.destination) || 'DB location pending';
+        }
+        function renderFleetAudit(trips, vehicles, catalog) {
+            const withCoordinates = vehicles.filter((item) => readLatLng(item));
+            const online = vehicles.filter((item) => String(item.location || '').toLowerCase().includes('online')).length;
+            const offline = vehicles.filter((item) => String(item.location || '').toLowerCase().includes('offline')).length;
+            const ack = vehicles.filter((item) => String(item.location || '').toLowerCase().includes('ack')).length;
+            document.getElementById('detail-link').href = '/';
+            document.getElementById('subtitle').textContent = 'All-fleet Odoo routes + Mayet GPS positions';
+            document.getElementById('mayet-subtitle').textContent = `${vehicles.length} Mayet vehicles · ${withCoordinates.length} mapped`;
+            document.getElementById('mayet-body').innerHTML = `
+                <div class="state-box"><div class="state-label">Mayet Vehicles</div><div class="state-value">${vehicles.length}</div></div>
+                <div class="state-box"><div class="state-label">Mapped GPS</div><div class="state-value green">${withCoordinates.length}</div></div>
+                <div class="state-box"><div class="state-label">Online</div><div class="state-value green">${online}</div></div>
+                <div class="state-box"><div class="state-label">Offline</div><div class="state-value red">${offline}</div></div>
+                <div class="mayet-note">Primary source is the Mayet worker cache. The map overlays Odoo trip routes where route city coordinates are known.</div>
+            `;
+            document.getElementById('audit-panel').innerHTML = `
+                <div class="state-strip">
+                    <div class="state-box"><div class="state-label">Odoo Trips</div><div class="state-value">${trips.length}</div></div>
+                    <div class="state-box"><div class="state-label">Mayet Catalog</div><div class="state-value">${catalog.count || vehicles.length}</div></div>
+                    <div class="state-box"><div class="state-label">ACK</div><div class="state-value amber">${ack}</div></div>
+                    <div class="state-box"><div class="state-label">GPS Source</div><div class="state-value">${catalog.captured_at ? 'Cached' : 'Live cache'}</div></div>
+                </div>
+                <div class="legend">
+                    <div class="legend-row"><span class="legend-dot online"></span>Mayet Online vehicle</div>
+                    <div class="legend-row"><span class="legend-dot offline"></span>Mayet Offline vehicle</div>
+                    <div class="legend-row"><span class="legend-dot ack"></span>Mayet ACK/idle vehicle</div>
+                    <div class="legend-row"><span class="legend-dot odoo"></span>Odoo route line or stop</div>
+                </div>
+            `;
+            refreshIcons();
+        }
+        function renderAudit(trip, gpsPayload) {
+            const dbLocation = getDbLocation(trip);
+            const gps = (gpsPayload && gpsPayload.gps) || gpsFromTrip(trip);
+            const gpsPoint = readLatLng(gps);
+            const gpsLocation = gps ? [gps.location, gps.address, gpsPoint ? `${gpsPoint[0]}, ${gpsPoint[1]}` : ''].filter(Boolean).join(' · ') : 'No cached Mayet GPS position';
+            const differs = gps && gpsLocation && !gpsLocation.toLowerCase().includes(String(dbLocation).toLowerCase());
+            const mayetUrl = buildMayetUrl((gpsPayload && gpsPayload.mayet_url) || 'https://mayetgps.com/', trip);
+            const state = normalizeState(trip.status);
+            const payState = getPaymentState(trip);
+            document.getElementById('mayet-direct-link').href = mayetUrl;
+            document.getElementById('mayet-subtitle').textContent = `${trip.vehicle_plate || trip.id} · ${stateLabel(state)} · ${paymentLabel(trip)}`;
+            document.getElementById('mayet-body').innerHTML = `
+                <div class="state-box"><div class="state-label">Mayet Vehicle</div><div class="state-value">${clean(trip.vehicle_plate || trip.id)}</div></div>
+                <div class="state-box"><div class="state-label">GPS Cache</div><div class="state-value ${gps ? 'green' : 'amber'}">${gps ? 'Available' : 'Waiting'}</div></div>
+                <div class="state-box"><div class="state-label">Speed</div><div class="state-value">${clean(gps && gps.speed != null ? `${gps.speed} km/h` : 'N/A')}</div></div>
+                <div class="state-box"><div class="state-label">Captured</div><div class="state-value">${clean(gps && gps.captured_at ? new Date(gps.captured_at).toLocaleString() : 'N/A')}</div></div>
+                <div class="mayet-note">Live GPS is shown from the Mayet worker cache. Use Open Mayet for direct authenticated inspection in Mayet.</div>
+            `;
+            document.getElementById('subtitle').textContent = `${trip.vehicle_plate || trip.id} · ${trip.driver_name || 'Unassigned'}`;
+            document.getElementById('audit-panel').innerHTML = `
+                <div class="selected-vehicle">
+                    <div class="selected-head">
+                        <div>
+                            <div class="state-label">Mayet selected vehicle</div>
+                            <div class="selected-name">${clean((gps && gps.plate) || trip.vehicle_plate || trip.id)}</div>
+                        </div>
+                        <div class="selected-speed">${clean(gps && gps.speed != null ? `${gps.speed}` : '0')}<br><span style="font-size:10px;">kph</span></div>
+                    </div>
+                    <div class="selected-meta">
+                        <div><strong>Address:</strong> ${clean((gps && (gps.address || gps.location)) || 'Waiting for Mayet GPS cache')}</div>
+                        <div><strong>Time:</strong> ${clean(gps && gps.captured_at ? new Date(gps.captured_at).toLocaleString() : 'N/A')}</div>
+                        <div><strong>Coordinates:</strong> ${clean(gpsPoint ? `${gpsPoint[0]}, ${gpsPoint[1]}` : 'N/A')}</div>
+                        <div><strong>Battery:</strong> ${clean(gps && gps.battery != null ? `${gps.battery}%` : 'N/A')} · <strong>Mileage:</strong> ${clean(gps && gps.mileage != null ? gps.mileage : 'N/A')}</div>
+                    </div>
+                </div>
+                <div class="state-strip">
+                    <div class="state-box"><div class="state-label">Trip State</div><div class="state-value ${state === 'done' ? 'green' : state === 'cancelled' ? 'red' : 'amber'}">${stateLabel(state)}</div></div>
+                    <div class="state-box"><div class="state-label">Payment</div><div class="state-value ${payState === 'paid' ? 'green' : payState === 'pending' ? 'red' : 'amber'}">${paymentLabel(trip)}</div></div>
+                    <div class="state-box"><div class="state-label">Vehicle Orders</div><div class="state-value">${getOrderCount(trip)}</div></div>
+                    <div class="state-box"><div class="state-label">Pending</div><div class="state-value amber">${money(trip.pending_payment)}</div></div>
+                </div>
+                <div class="row"><div class="label">Vehicle</div><div>${clean(trip.vehicle_plate || trip.id)}</div></div>
+                <div class="row"><div class="label">Customer</div><div>${clean(trip.customer_name || 'N/A')}</div></div>
+                <div class="row"><div class="label">Driver</div><div>${clean(trip.driver_name || 'Unassigned')}</div></div>
+                <div class="row"><div class="label">DB Location</div><div>${clean(dbLocation)}</div></div>
+                <div class="row"><div class="label">GPS Location</div><div>${clean(gpsLocation)}</div></div>
+                <div class="row"><div class="label">Status</div><div class="${differs ? 'red' : (gps ? 'green' : 'amber')}">${differs ? 'GPS and DB location differ' : (gps ? 'GPS available' : 'Waiting for GPS cache')}</div></div>
+                <div class="row"><div class="label">Mayet</div><div><a class="btn" href="${clean(mayetUrl)}" target="_blank" rel="noreferrer">Open selected vehicle in Mayet</a></div></div>
+                <div class="row"><div class="label">History</div><div><div class="history-list" id="vehicle-history"><div class="empty">Loading vehicle history...</div></div></div></div>
+            `;
+            refreshIcons();
+        }
+        function renderMap(trip, gpsPayload) {
+            initMap();
             const points = [];
-            if (j.trips && j.trips.length > 0) {
-                j.trips.forEach(trip => {
-                    const o = cityCoords[trip.origin] || [9 + Math.random() - 0.5, 38 + Math.random() - 0.5];
-                    const d = cityCoords[trip.destination] || [9 + Math.random() - 0.5, 38 + Math.random() - 0.5];
-                    if (trip.origin === BASE) points.push(o);
-                    L.marker(o).addTo(map).bindPopup(`<b>${trip.origin}</b><br>Start: ${trip.departure_date}`);
-                    if (trip.destination !== BASE) {
-                        L.marker(d).addTo(map).bindPopup(`<b>${trip.destination}</b><br>End: ${trip.arrival_date || 'Pending'}`);
-                    }
-                    const latlngs = [o, d];
-                    L.polyline(latlngs, { color: '#60a5fa', weight: 3 }).addTo(map);
-                });
+            const legs = Array.isArray(trip.trips) ? trip.trips : [];
+            const routePairs = legs.length ? legs.map((leg) => [leg.origin, leg.destination]) : [[trip.origin, Array.isArray(trip.destinations) ? trip.destinations[0] : trip.destination]];
+            routePairs.forEach(([origin, destination]) => {
+                const o = resolveCityCoords(origin);
+                const d = resolveCityCoords(destination);
+                if (o) { points.push(o); L.marker(o).addTo(map).bindPopup(`<b>DB Origin</b><br>${clean(origin)}`); }
+                if (d) { points.push(d); L.marker(d).addTo(map).bindPopup(`<b>DB Destination</b><br>${clean(destination)}`); }
+                if (o && d) L.polyline([o, d], { color: '#00499e', weight: 4 }).addTo(map);
+            });
+            const gps = (gpsPayload && gpsPayload.gps) || gpsFromTrip(trip);
+            const gpsPoint = readLatLng(gps);
+            if (gpsPoint) {
+                points.push(gpsPoint);
+                const gpsMarker = L.circleMarker(gpsPoint, { radius: 10, color: gpsTone(gps.location), fillColor: gpsTone(gps.location), fillOpacity: 0.9 })
+                    .addTo(map)
+                    .bindPopup(`<b>Mayet GPS</b><br>${clean(gps.plate || trip.vehicle_plate || trip.id)}<br>${clean(gps.location || 'Status pending')}<br>${clean(gps.address || '')}`);
+                map.setView(gpsPoint, 15);
+                gpsMarker.openPopup();
+                return;
             }
-
-            if (points.length > 0) {
-                const bounds = L.latLngBounds(points);
-                map.fitBounds(bounds, { padding: [50, 50] });
+            if (points.length) {
+                map.fitBounds(L.latLngBounds(points), { padding: [40, 40] });
+            } else {
+                map.setView(cityCoords['Addis Ababa'], 6);
+                L.marker(cityCoords['Addis Ababa']).addTo(map).bindPopup('No mappable Odoo route or Mayet GPS coordinates yet.');
             }
         }
-
-        function formatMoney(amount) {
-            return new Intl.NumberFormat('en-ET', { style: 'currency', currency: 'ETB', minimumFractionDigits: 2 }).format(amount || 0);
+        function renderFleetMap(trips, vehicles) {
+            initMap();
+            const points = [];
+            trips.slice(0, 50).forEach((trip) => {
+                const origin = trip.origin;
+                const destination = Array.isArray(trip.destinations) ? trip.destinations[0] : trip.destination;
+                const o = resolveCityCoords(origin);
+                const d = resolveCityCoords(destination);
+                if (o) {
+                    points.push(o);
+                    L.circleMarker(o, { radius: 5, color: '#00499e', fillColor: '#00499e', fillOpacity: 0.75 })
+                        .addTo(map)
+                        .bindPopup(`<b>Odoo origin</b><br>${clean(trip.vehicle_plate || trip.id)}<br>${clean(origin)}`);
+                }
+                if (d) {
+                    points.push(d);
+                    L.circleMarker(d, { radius: 5, color: '#00499e', fillColor: '#00499e', fillOpacity: 0.75 })
+                        .addTo(map)
+                        .bindPopup(`<b>Odoo destination</b><br>${clean(trip.vehicle_plate || trip.id)}<br>${clean(destination)}`);
+                }
+                if (o && d) L.polyline([o, d], { color: '#00499e', weight: 2, opacity: 0.35, dashArray: '6 6' }).addTo(map);
+            });
+            vehicles.forEach((vehicle) => {
+                const point = readLatLng(vehicle);
+                if (!point) return;
+                points.push(point);
+                const color = gpsTone(vehicle.location);
+                L.circleMarker(point, { radius: 7, color, fillColor: color, fillOpacity: 0.85, weight: 2 })
+                    .addTo(map)
+                    .bindPopup(`<b>${clean(vehicle.plate || 'Mayet vehicle')}</b><br>${clean(vehicle.location || 'Status pending')}<br>${clean(vehicle.captured_at || '')}<br>${clean(vehicle.address || '')}`);
+            });
+            if (points.length) map.fitBounds(L.latLngBounds(points), { padding: [36, 36] });
         }
-
-        function showError(msg) {
-            document.getElementById('route-panel').innerHTML = `<div class="loading" style="color:#f87171;">${msg}</div>`;
-        }
-
-        const BASE = 'Topwater Ethiopia HQ, Addis Ababa';
-        loadJourney();
+        function showError(message) { document.getElementById('audit-panel').innerHTML = `<div class="empty">${clean(message)}</div>`; }
+        document.getElementById('vehicle-search-button').addEventListener('click', () => {
+            const value = document.getElementById('vehicle-search-input').value.trim();
+            if (!value) return;
+            const url = new URL(window.location.href);
+            url.searchParams.set('vehicle', value);
+            window.history.replaceState({}, '', url.toString());
+            loadSelectedVehicle(value);
+        });
+        document.getElementById('vehicle-search-input').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') document.getElementById('vehicle-search-button').click();
+        });
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('fleetTheme', currentTheme);
+            applyTheme();
+        });
+        applyTheme();
+        loadTrip();
     </script>
 </body>
 </html>

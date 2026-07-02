@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fleet Trips - Login</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #f8fafc; --panel: #ffffff; --line: #d9e2ef; --text: #0f172a;
+            --muted: #64748b; --primary: #00499e; --red: #dc2626;
+        }
+        body {
+            min-height: 100vh; background: var(--bg); color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+            display: grid; place-items: center; padding: 24px;
+        }
+        .login-shell { width: min(100%, 420px); }
+        .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+        .brand-mark { width: 44px; height: 44px; border-radius: 8px; background: #fff; display: grid; place-items: center; border: 1px solid var(--line); }
+        .brand-mark img { width: 34px; height: 34px; }
+        .brand-title { font-size: 22px; font-weight: 900; }
+        .brand-subtitle { color: var(--muted); font-size: 13px; margin-top: 2px; }
+        .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 22px; box-shadow: 0 20px 45px rgba(15,23,42,0.08); }
+        label { display: block; font-size: 13px; font-weight: 800; margin-bottom: 8px; }
+        input { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font: inherit; margin-bottom: 14px; }
+        button { width: 100%; min-height: 44px; border: 0; border-radius: 8px; background: var(--primary); color: #fff; font: inherit; font-weight: 900; cursor: pointer; }
+        button:disabled { opacity: 0.65; cursor: wait; }
+        .error { display: none; color: var(--red); background: rgba(220,38,38,0.08); border: 1px solid rgba(220,38,38,0.2); border-radius: 8px; padding: 10px; font-size: 13px; margin-bottom: 14px; }
+        .role-note { color: var(--muted); font-size: 12px; margin-top: 14px; line-height: 1.5; }
+    </style>
+</head>
+<body>
+    <main class="login-shell">
+        <div class="brand">
+            <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="Fleet Trips"></div>
+            <div><div class="brand-title">Fleet Trips</div><div class="brand-subtitle">App authentication</div></div>
+        </div>
+        <section class="panel">
+            <form id="login-form">
+                <div class="error" id="error-box"></div>
+                <label for="username">Username</label>
+                <input id="username" name="username" autocomplete="username" placeholder="danat.yoh" required>
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" autocomplete="current-password" required>
+                <button id="submit-btn" type="submit">Login</button>
+                <div class="role-note">Manager can approve payments. Supervisor and Salesperson can view app data without payment approval permission.</div>
+            </form>
+        </section>
+    </main>
+    <script>
+        const form = document.getElementById('login-form');
+        const errorBox = document.getElementById('error-box');
+        const submitBtn = document.getElementById('submit-btn');
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            errorBox.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Logging in...';
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        username: document.getElementById('username').value,
+                        password: document.getElementById('password').value
+                    })
+                });
+                if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Login failed');
+                window.location.href = '/';
+            } catch (error) {
+                errorBox.textContent = error.message;
+                errorBox.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Login';
+            }
+        });
+    </script>
+</body>
+</html>

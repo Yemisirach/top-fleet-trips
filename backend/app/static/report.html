@@ -5,224 +5,1223 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fleet Trips - Reports</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-        .app { display: flex; min-height: 100vh; }
-        .sidebar { width: 260px; min-height: 100vh; background: #0b1120; border-right: 1px solid #1e293b; position: fixed; top: 0; left: 0; }
-        .brand { padding: 24px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #1e293b; }
-        .logo-icon { width: 36px; height: 36px; border-radius: 10px; background: #1e293b; display: flex; align-items: center; justify-content: center; }
-        .logo-text { font-size: 18px; font-weight: 700; }
-        .nav { list-style: none; padding: 0 16px; margin-top: 12px; }
-        .nav li { padding: 12px 16px; margin-bottom: 4px; border-radius: 8px; display: flex; align-items: center; gap: 12px; color: #94a3b8; }
-        .nav li:hover { background: #1e293b; color: #e2e8f0; cursor: pointer; }
-        .nav li.active { background: #1e3a5f; color: #60a5fa; font-weight: 600; }
-        .main-content { margin-left: 260px; flex: 1; padding: 32px; }
-        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-        .page-title { font-size: 28px; font-weight: 700; }
-        .tabs { display: flex; gap: 8px; margin: 24px 0; }
-        .tab { padding: 10px 24px; border-radius: 8px; background: #1e293b; border: 1px solid #334155; cursor: pointer; font-size: 14px; color: #94a3b8; transition: 0.2s; }
-        .tab.active { background: #4f6df5; border-color: #4f6df5; color: #fff; }
-        .kpi-row { display: flex; gap: 16px; margin: 20px 0; flex-wrap: wrap; }
-        .kpi-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; flex: 1; min-width: 160px; }
-        .kpi-label { font-size: 12px; color: #94a3b8; margin-bottom: 8px; text-transform: uppercase; }
-        .kpi-value { font-size: 28px; font-weight: 700; }
-        .report-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-        .report-table th, .report-table td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #334155; }
-        .report-table th { background: #0b1120; color: #94a3b8; font-weight: 600; font-size: 13px; text-transform: uppercase; }
-        .report-table tr:hover { background: #1e293b; }
-        .status { display: inline-flex; padding: 4px 12px; border-radius: 20px; font-size: 12px; }
-        .status.on-trip { background: #052e16; color: #4ade80; }
-        .status.available { background: #1e3a5f; color: #60a5fa; }
-        .amount { font-family: monospace; }
-        .amount.revenue { color: #4ade80; }
-        .amount.expense { color: #f87171; }
-        .nav-link { text-decoration: none; color: inherit; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #f8fafc;
+            --panel: #ffffff;
+            --panel-2: #f4f8fd;
+            --line: #d9e2ef;
+            --text: #0f172a;
+            --muted: #64748b;
+            --primary: #00499e;
+            --secondary: #0e9849;
+            --primary-soft: #eaf4ff;
+            --secondary-soft: #e9f9f0;
+            --amber: #f59e0b;
+            --red: #dc2626;
+        }
+        body.dark {
+            --bg: #0f172a;
+            --panel: #111827;
+            --panel-2: #162033;
+            --line: #253244;
+            --text: #e5e7eb;
+            --muted: #94a3b8;
+            --primary-soft: #0f2747;
+            --secondary-soft: #0d2e1c;
+        }
+        body {
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        button, select, input { font: inherit; }
+        .layout { min-height: 100vh; display: flex; }
+        .sidebar {
+            position: fixed;
+            inset: 0 auto 0 0;
+            width: 272px;
+            background: var(--primary);
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+        }
+        .brand {
+            min-height: 72px;
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+        }
+        .brand-mark {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: #ffffff;
+            display: grid;
+            place-items: center;
+            overflow: hidden;
+        }
+        .brand-mark img { width: 32px; height: 32px; display: block; }
+        .brand-title { font-weight: 800; line-height: 1.1; }
+        .brand-subtitle { color: rgba(255, 255, 255, 0.78); font-size: 12px; margin-top: 2px; }
+        .nav { padding: 12px; display: grid; gap: 4px; }
+        .nav a {
+            color: rgba(255, 255, 255, 0.78);
+            text-decoration: none;
+            border-radius: 8px;
+            padding: 11px 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .nav a:hover { background: rgba(255, 255, 255, 0.1); color: #ffffff; }
+        .nav a.active { background: #ffffff; color: var(--primary); font-weight: 800; }
+        .icon { width: 18px; height: 18px; stroke-width: 2; flex: 0 0 auto; }
+        .main {
+            width: 100%;
+            min-width: 0;
+            margin-left: 272px;
+            padding: 24px;
+        }
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .page-title { font-size: 24px; font-weight: 900; }
+        .page-subtitle { color: var(--muted); font-size: 13px; margin-top: 3px; }
+        .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        select, input {
+            min-height: 40px;
+            border: 1px solid var(--line);
+            background: var(--panel);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 8px 10px;
+        }
+        .btn {
+            min-height: 40px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            color: var(--text);
+            padding: 8px 12px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .btn.primary { background: var(--primary); border-color: var(--primary); color: #ffffff; }
+        .mode-badge {
+            min-height: 40px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            color: var(--muted);
+            max-width: 420px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .mode-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--secondary); }
+        .mode-badge.demo .mode-dot { background: var(--amber); }
+        .mode-badge.warning .mode-dot { background: var(--red); }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .card, .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        .card { padding: 16px; min-height: 104px; min-width: 0; }
+        .card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .card-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--primary-soft); color: var(--primary); }
+        .card-label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+        .card-value { font-size: 22px; font-weight: 900; margin-top: 9px; overflow-wrap: anywhere; }
+        .green { color: var(--secondary); }
+        .red { color: var(--red); }
+        .blue { color: var(--primary); }
+        .panel { overflow: hidden; margin-bottom: 20px; }
+        .panel-header {
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px solid var(--line);
+        }
+        .panel-title { font-weight: 900; }
+        .panel-subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
+        .tabs { display: flex; gap: 8px; flex-wrap: wrap; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+        .tab {
+            border: 1px solid var(--line);
+            background: var(--panel);
+            color: var(--muted);
+            border-radius: 8px;
+            min-height: 38px;
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        .tab.active { background: var(--primary); color: #ffffff; border-color: var(--primary); }
+        .filter-bar {
+            display: grid;
+            grid-template-columns: 1.1fr minmax(220px, 1fr) 0.8fr 0.8fr 0.8fr 0.8fr auto auto auto;
+            gap: 10px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--line);
+            background: var(--panel-2);
+        }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 860px; }
+        th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; }
+        th { color: var(--muted); font-size: 11px; text-transform: uppercase; background: var(--panel-2); }
+        tr:hover td { background: rgba(0, 73, 158, 0.04); }
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            padding: 3px 9px;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            color: var(--muted);
+            white-space: nowrap;
+            font-size: 12px;
+        }
+        .pill.good { color: var(--secondary); border-color: rgba(14, 152, 73, 0.32); background: var(--secondary-soft); }
+        .pill.info { color: var(--primary); border-color: rgba(0, 73, 158, 0.32); background: var(--primary-soft); }
+        .empty { padding: 36px 16px; text-align: center; color: var(--muted); }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--line);
+            background: var(--panel);
+        }
+        .summary-card {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 14px;
+            background: var(--panel-2);
+            min-height: 96px;
+        }
+        .summary-title { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+        .summary-value { font-size: 22px; font-weight: 900; margin-top: 8px; }
+        .location-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--line);
+        }
+        .location-card {
+            position: relative;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 14px;
+            background: var(--panel);
+        }
+        .location-name { font-weight: 900; }
+        .location-count { font-size: 26px; font-weight: 900; color: var(--primary); margin-top: 8px; }
+        .location-meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+        .location-tooltip {
+            display: none;
+            position: absolute;
+            z-index: 10;
+            left: 12px;
+            right: 12px;
+            top: calc(100% - 8px);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+            padding: 10px;
+            color: var(--text);
+            font-size: 12px;
+        }
+        .location-card:hover .location-tooltip { display: block; }
+        .share-report {
+            margin: 14px 16px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            padding: 16px;
+        }
+        .share-title { font-weight: 900; margin-bottom: 10px; }
+        .share-text {
+            width: 100%;
+            min-height: 160px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel-2);
+            color: var(--text);
+            padding: 10px;
+            resize: vertical;
+            font: inherit;
+        }
+        .report-sheet {
+            margin: 14px 16px;
+            border: 1px solid #111827;
+            background: #ffffff;
+            color: #111827;
+            overflow-x: auto;
+        }
+        .report-sheet-header {
+            padding: 14px 16px 10px;
+            text-align: center;
+            border-bottom: 1px solid #111827;
+        }
+        .report-sheet-title {
+            font-size: 18px;
+            font-weight: 900;
+            text-transform: uppercase;
+        }
+        .report-sheet-date {
+            margin-top: 4px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .exact-report-table {
+            width: 100%;
+            min-width: 1160px;
+            border-collapse: collapse;
+        }
+        .exact-report-table th,
+        .exact-report-table td {
+            border: 1px solid #111827;
+            padding: 8px 9px;
+            color: #111827;
+            background: #ffffff;
+            vertical-align: top;
+            font-size: 12px;
+        }
+        .exact-report-table th {
+            text-align: center;
+            font-weight: 900;
+            text-transform: none;
+            white-space: normal;
+        }
+        .exact-report-table td.number-cell,
+        .exact-report-table th.number-cell {
+            text-align: right;
+            white-space: nowrap;
+        }
+        .exact-report-table .total-row td {
+            font-weight: 900;
+            background: #f8fafc;
+        }
+        .daily-report-actions {
+            margin: 0 16px 14px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        @media (max-width: 1180px) {
+            .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .summary-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 860px) {
+            .sidebar { position: static; width: 100%; min-height: auto; }
+            .layout { display: block; }
+            .main { margin-left: 0; padding: 16px; }
+            .topbar { align-items: flex-start; flex-direction: column; }
+            .grid { grid-template-columns: 1fr; }
+            .filter-bar { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
-    <div class="app">
+    <div class="layout">
         <aside class="sidebar">
             <div class="brand">
-                <div class="logo-icon">🏗️</div>
-                <div class="logo-text">Fleet Trips</div>
+                <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="Fleet Trips"></div>
+                <div>
+                    <div class="brand-title">Fleet Trips</div>
+                    <div class="brand-subtitle">Reports</div>
+                </div>
             </div>
-            <ul class="nav">
-                <a href="/" class="nav-link"><li><span class="nav-icon">📊</span> Dashboard</li></a>
-                <li class="active"><span class="nav-icon">📈</span> Reports</li>
-            </ul>
+            <nav class="nav">
+                <a href="/"><i data-lucide="layout-dashboard" class="icon"></i>Dashboard</a>
+                <a href="/report.html" class="active"><i data-lucide="file-bar-chart" class="icon"></i>Reports</a>
+                <a href="/report.html#payment-requests"><i data-lucide="credit-card" class="icon"></i>Payments</a>
+            </nav>
         </aside>
-        <div class="main-content">
-            <div class="page-header">
+
+        <main class="main">
+            <div class="topbar">
                 <div>
                     <h1 class="page-title">Fleet Reports</h1>
-                    <p style="color: #94a3b8; margin-top: 4px;">Vehicle utilization &amp; financial reports</p>
+                    <div class="page-subtitle">Current location, payment requests, and income statement</div>
+                </div>
+                <div class="controls">
+                    <div class="mode-badge" id="mode-badge"><span class="mode-dot"></span><span id="mode-label">Live DB</span></div>
+                    <select id="mode-select" aria-label="Data source">
+                        <option value="live">Live DB</option>
+                        <option value="demo">Demo DB</option>
+                    </select>
+                    <button class="btn" id="theme-toggle" type="button"><i data-lucide="moon" class="icon"></i><span id="theme-label">Dark</span></button>
                 </div>
             </div>
 
-            <div class="kpi-row">
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Vehicles</div>
-                    <div class="kpi-value" id="total-vehicles">-</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">On Trip</div>
-                    <div class="kpi-value" id="active-vehicles">-</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Revenue</div>
-                    <div class="kpi-value amount revenue" id="total-revenue">-</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Expenses</div>
-                    <div class="kpi-value amount expense" id="total-expense">-</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Net Profit</div>
-                    <div class="kpi-value amount" id="net-profit">-</div>
-                </div>
-            </div>
+            <!-- KPI cards removed per request - clean list + details layout -->
 
-            <div class="tabs">
-                <button class="tab active" onclick="filterReport('daily', this)">Daily</button>
-                <button class="tab" onclick="filterReport('weekly', this)">Weekly</button>
-                <button class="tab" onclick="filterReport('monthly', this)">Monthly</button>
-                <button class="tab" onclick="filterReport('yearly', this)">Yearly</button>
-            </div>
-
-            <div id="report-table-container">
-                <table class="report-table">
-                    <thead>
-                        <tr>
-                            <th>Vehicle</th>
-                            <th>Brand</th>
-                            <th>Driver</th>
-                            <th>Status</th>
-                            <th>Trips</th>
-                            <th>Revenue</th>
-                            <th>Expense</th>
-                            <th>Net</th>
-                        </tr>
-                    </thead>
-                    <tbody id="report-body">
-                    </tbody>
-                </table>
-            </div>
-        </div>
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <div class="panel-title">Reports</div>
+                        <div class="panel-subtitle" id="report-subtitle">Live report data</div>
+                    </div>
+                </div>
+                <div class="tabs">
+                    <button class="tab active" data-report="current-location"><i data-lucide="map-pin" class="icon"></i>Current Location</button>
+                    <button class="tab" data-report="location-summary"><i data-lucide="map-pinned" class="icon"></i>Location Summary</button>
+                    <button class="tab" data-report="payment-requests"><i data-lucide="credit-card" class="icon"></i>Payment Requests</button>
+                    <button class="tab" data-report="finance-summary"><i data-lucide="chart-no-axes-combined" class="icon"></i>Finance Summary</button>
+                    <button class="tab" data-report="daily-profit"><i data-lucide="message-square-text" class="icon"></i>Daily Profit</button>
+                    <button class="tab" data-report="income-statement"><i data-lucide="receipt-text" class="icon"></i>Income Statement</button>
+                    <button class="tab" data-report="trip-register"><i data-lucide="route" class="icon"></i>Trip Register</button>
+                </div>
+                <div class="filter-bar">
+                    <select id="report-select" aria-label="Report type">
+                        <option value="current-location">Current Location</option>
+                        <option value="location-summary">Location Summary</option>
+                        <option value="payment-requests">Payment Requests</option>
+                        <option value="finance-summary">Finance Summary</option>
+                        <option value="daily-profit">Daily Profit</option>
+                        <option value="income-statement">Income Statement</option>
+                        <option value="trip-register">Trip Register</option>
+                    </select>
+                    <input id="report-search" type="search" placeholder="Search report rows">
+                    <select id="status-filter" aria-label="Trip status">
+                        <option value="all">Any status</option>
+                        <option value="draft">Draft</option>
+                        <option value="available">Available</option>
+                        <option value="assigned">Assigned</option>
+                        <option value="dispatched">Dispatched</option>
+                        <option value="done">Done</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                    <select id="payment-status-filter" aria-label="Payment status">
+                        <option value="all">Any payment</option>
+                        <option value="pending">Pending</option>
+                        <option value="paid">Paid</option>
+                        <option value="approved">Approved</option>
+                        <option value="confirmed">Confirmed</option>
+                        <option value="draft">Draft</option>
+                    </select>
+                    <select id="period-filter" aria-label="Report period">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                    </select>
+                    <input id="from-date-filter" type="date" aria-label="Start date">
+                    <input id="to-date-filter" type="date" aria-label="End date">
+                    <button class="btn primary" id="generate-report" type="button"><i data-lucide="play" class="icon"></i>Generate</button>
+                    <button class="btn" id="copy-whatsapp" type="button"><i data-lucide="copy" class="icon"></i>Copy</button>
+                    <button class="btn" id="export-excel" type="button"><i data-lucide="file-spreadsheet" class="icon"></i>Excel</button>
+                </div>
+                <div id="visual-report"></div>
+                <div class="table-wrap"><table id="report-table"></table></div>
+            </section>
+        </main>
     </div>
 
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script>
-        let allJourneys = [];
-        let allVehicles = [];
+        const API_BASE = '/api';
+        let currentMode = localStorage.getItem('fleetDashboardMode') || 'live';
+        let currentReport = 'daily-profit';
+        if (window.location.hash === '#payment-requests') {
+            currentReport = 'payment-requests';
+            window.location.hash = '';
+        }
+        let currentTheme = localStorage.getItem('fleetTheme') || 'light';
+        let exportHeaders = [];
+        let exportRows = [];
+        let dashboardData = {};
+        let reportData = {
+            currentLocation: [],
+            currentLocationSummary: { locations: [] },
+            paymentRequests: [],
+            financeSummary: { periods: [], totals: {} },
+            dailyProfit: { rows: [], totals: {} },
+            incomeStatement: {},
+        };
 
-        async function loadData() {
+        const $ = (id) => document.getElementById(id);
+        const clean = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[char]));
+        const money = (value) => new Intl.NumberFormat('en-ET', {
+            style: 'currency',
+            currency: 'ETB',
+            maximumFractionDigits: 0,
+        }).format(Number(value || 0));
+        const amount = (value) => new Intl.NumberFormat('en-ET', {
+            maximumFractionDigits: 2,
+        }).format(Number(value || 0));
+
+        function refreshIcons() {
+            if (window.lucide) window.lucide.createIcons();
+        }
+
+        function applyTheme() {
+            document.body.classList.toggle('dark', currentTheme === 'dark');
+            $('theme-label').textContent = currentTheme === 'dark' ? 'Light' : 'Dark';
+            $('theme-toggle').innerHTML = `<i data-lucide="${currentTheme === 'dark' ? 'sun' : 'moon'}" class="icon"></i><span id="theme-label">${currentTheme === 'dark' ? 'Light' : 'Dark'}</span>`;
+            refreshIcons();
+        }
+
+        function updateModeBadge(mode, warning) {
+            const badge = $('mode-badge');
+            badge.classList.toggle('demo', mode === 'demo');
+            badge.classList.toggle('warning', Boolean(warning));
+            $('mode-label').textContent = warning || (mode === 'demo' ? 'Demo DB' : 'Live DB');
+            $('mode-label').title = warning || '';
+        }
+
+        async function fetchJson(url) {
+            const response = await fetch(url);
+            if (!response.ok) {
+                const body = await response.json().catch(() => ({}));
+                throw new Error(body.detail || `Request failed (${response.status})`);
+            }
+            return response.json();
+        }
+
+        async function loadReports() {
+            $('mode-select').value = currentMode;
+            updateModeBadge(currentMode, 'Loading...');
             try {
-                const [journeysRes, vehiclesRes] = await Promise.all([
-                    fetch('/api/journeys').then(r => r.json()).catch(() => ({journeys: []})),
-                    fetch('/api/vehicles').then(r => r.json()).catch(() => ([]))
-                ]);
-
-                allJourneys = journeysRes.journeys || [];
-                allVehicles = vehiclesRes.vehicles || vehiclesRes || [];
-
-                if (!Array.isArray(allJourneys)) allJourneys = [];
-                if (!Array.isArray(allVehicles)) allVehicles = [];
-
-                updateKPIs();
-                filterReport('daily', document.querySelector('.tab.active'));
-            } catch (e) {
-                console.error('Failed to load data:', e);
+                dashboardData = await fetchJson(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(currentMode)}`);
+                if (currentMode === 'live') {
+                    const [currentLocation, currentLocationSummary, paymentRequests, financeSummary, dailyProfit, incomeStatement] = await Promise.all([
+                        fetchJson(`${API_BASE}/reports/current-location`),
+                        fetchJson(`${API_BASE}/reports/current-location-summary`),
+                        fetchJson(`${API_BASE}/reports/payment-requests`),
+                        fetchFinanceSummary(),
+                        fetchDailyProfit(),
+                        fetchJson(`${API_BASE}/reports/income-statement`),
+                    ]);
+                    reportData = { currentLocation, currentLocationSummary, paymentRequests, financeSummary, dailyProfit, incomeStatement };
+                } else {
+                    reportData = buildDemoReports(dashboardData);
+                }
+                updateModeBadge(dashboardData._mode || currentMode, dashboardData._warning || '');
+                renderAll();
+            } catch (error) {
+                dashboardData = {};
+                reportData = { currentLocation: [], currentLocationSummary: { locations: [] }, paymentRequests: [], financeSummary: { periods: [], totals: {} }, dailyProfit: { rows: [], totals: {} }, incomeStatement: {} };
+                updateModeBadge(currentMode, error.message || 'Load failed');
+                renderAll();
             }
         }
 
-        function updateKPIs() {
-            const totalVehicles = allVehicles.length;
-            const activeVehicles = allVehicles.filter(v => v.status === 'on_trip' || v.status === 'on trip').length;
-
-            let totalRevenue = 0;
-            let totalExpense = 0;
-            allJourneys.forEach(j => {
-                totalRevenue += j.total_revenue || 0;
-                totalExpense += j.total_expense || 0;
-            });
-            const netProfit = totalRevenue - totalExpense;
-
-            document.getElementById('total-vehicles').textContent = totalVehicles;
-            document.getElementById('active-vehicles').textContent = activeVehicles;
-            document.getElementById('total-revenue').textContent = formatMoney(totalRevenue);
-            document.getElementById('total-expense').textContent = formatMoney(totalExpense);
-            document.getElementById('net-profit').textContent = formatMoney(netProfit);
+        function financeSummaryUrl() {
+            const params = new URLSearchParams({ period: $('period-filter').value });
+            if ($('from-date-filter').value) params.set('from_date', $('from-date-filter').value);
+            if ($('to-date-filter').value) params.set('to_date', $('to-date-filter').value);
+            return `${API_BASE}/reports/finance-summary?${params.toString()}`;
         }
 
-        function formatMoney(amount) {
-            return new Intl.NumberFormat('en-ET', { style: 'currency', currency: 'ETB', minimumFractionDigits: 2 }).format(amount || 0);
+        function dailyProfitUrl() {
+            const params = new URLSearchParams();
+            const reportDate = $('from-date-filter').value || $('to-date-filter').value;
+            if (reportDate) params.set('report_date', reportDate);
+            const query = params.toString();
+            return `${API_BASE}/reports/daily-profit${query ? `?${query}` : ''}`;
         }
 
-        function filterReport(period, btn) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            if (btn) btn.classList.add('active');
-
-            const now = new Date();
-            let startDate, endDate;
-
-            switch(period) {
-                case 'daily':
-                    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                    endDate = new Date(startDate); endDate.setDate(endDate.getDate() + 1);
-                    break;
-                case 'weekly':
-                    startDate = new Date(now); startDate.setDate(now.getDate() - now.getDay());
-                    endDate = new Date(startDate); endDate.setDate(endDate.getDate() + 7);
-                    break;
-                case 'monthly':
-                    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-                    endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-                    break;
-                case 'yearly':
-                    startDate = new Date(now.getFullYear(), 0, 1);
-                    endDate = new Date(now.getFullYear() + 1, 0, 1);
-                    break;
-                default:
-                    startDate = new Date(0); endDate = new Date();
-            }
-
-            const filtered = allJourneys.filter(j => {
-                if (!j.departure_date) return false;
-                const d = new Date(j.departure_date);
-                return d >= startDate && d < endDate;
-            });
-
-            renderTable(filtered);
+        async function fetchFinanceSummary() {
+            return fetchJson(financeSummaryUrl());
         }
 
-        function renderTable(journeys) {
-            const tbody = document.getElementById('report-body');
-            if (!journeys || journeys.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#94a3b8; padding: 40px;">No data for this period</td></tr>';
+        async function fetchDailyProfit() {
+            return fetchJson(dailyProfitUrl());
+        }
+
+        async function refreshFinanceSummary() {
+            if (currentMode !== 'live') return;
+            updateModeBadge(currentMode, 'Loading report...');
+            reportData.financeSummary = await fetchFinanceSummary();
+            updateModeBadge(dashboardData._mode || currentMode, dashboardData._warning || '');
+            renderAll();
+        }
+
+        async function refreshDailyProfit() {
+            if (currentMode !== 'live') {
+                const trips = Array.isArray(dashboardData.recent_journeys) ? dashboardData.recent_journeys : [];
+                reportData.dailyProfit = buildDemoDailyProfit(trips);
+                renderAll();
                 return;
             }
-
-            tbody.innerHTML = journeys.map(j => {
-                const status = j.status || 'unknown';
-                const statusClass = status === 'in_progress' || status === 'on_trip' ? 'on-trip' : 'available';
-                const revenue = j.total_revenue || 0;
-                const expense = j.total_expense || 0;
-                const net = revenue - expense;
-                const trips = j.trips ? j.trips.length : 0;
-
-                return `<tr>
-                    <td>${j.vehicle_plate || j.vehicle_id || 'N/A'}</td>
-                    <td>${j.vehicle_brand || 'N/A'}</td>
-                    <td>${j.driver_name || 'N/A'}</td>
-                    <td><span class="status ${statusClass}">${status}</span></td>
-                    <td>${trips}</td>
-                    <td class="amount revenue">${formatMoney(revenue)}</td>
-                    <td class="amount expense">${formatMoney(expense)}</td>
-                    <td class="amount">${formatMoney(net)}</td>
-                </tr>`;
-            }).join('');
+            updateModeBadge(currentMode, 'Loading report...');
+            reportData.dailyProfit = await fetchDailyProfit();
+            updateModeBadge(dashboardData._mode || currentMode, dashboardData._warning || '');
+            renderAll();
         }
 
-        loadData();
+        function buildDemoReports(data) {
+            const trips = Array.isArray(data.recent_journeys) ? data.recent_journeys : [];
+            return {
+                currentLocation: trips.map((trip) => ({
+                    trip_id: trip.id,
+                    reference: trip.id,
+                    vehicle_plate: trip.vehicle_plate,
+                    driver_name: trip.driver_name,
+                    departure_name: trip.origin,
+                    destination_name: Array.isArray(trip.destinations) ? trip.destinations.join(', ') : '',
+                    current_location_name: Array.isArray(trip.destinations) ? trip.destinations[0] : '',
+                    current_location_note: trip.status,
+                    departure_date: trip.departure_date,
+                    arrival_date: trip.return_date,
+                    state: trip.status,
+                    current_location_days: 0,
+                })),
+                currentLocationSummary: buildDemoLocationSummary(trips),
+                paymentRequests: trips.map((trip) => ({
+                    id: trip.id,
+                    name: trip.id,
+                    trip_reference: trip.id,
+                    vehicle_plate: trip.vehicle_plate,
+                    state: trip.pending_expense_payment ? 'pending' : 'paid',
+                    date: trip.departure_date,
+                    total_amount: trip.payment_request_total || trip.total_expense,
+                })),
+                incomeStatement: {
+                    trip_count: trips.length,
+                    revenue_total: data.total_revenue || 0,
+                    expense_total: data.total_expense || 0,
+                    profit: data.total_profit || 0,
+                    receivable_count: data.payment_summary?.receivable_trip_count || trips.length,
+                    payment_request_count: data.payment_summary?.payment_request_trip_count || trips.length,
+                },
+                financeSummary: buildDemoFinanceSummary(trips),
+                dailyProfit: buildDemoDailyProfit(trips),
+            };
+        }
+
+        function buildDemoLocationSummary(trips) {
+            const grouped = trips.reduce((acc, trip) => {
+                const location = (Array.isArray(trip.destinations) ? trip.destinations[0] : trip.destination) || trip.current_location || 'Unknown';
+                if (!acc[location]) acc[location] = { location_name: location, vehicle_count: 0, vehicles: [] };
+                acc[location].vehicle_count += 1;
+                acc[location].vehicles.push({
+                    reference: trip.id,
+                    vehicle_plate: trip.vehicle_plate,
+                    driver_name: trip.driver_name,
+                    state: trip.status,
+                    destination_name: location,
+                    days: 0,
+                });
+                return acc;
+            }, {});
+            return { locations: Object.values(grouped), total_locations: Object.keys(grouped).length, total_vehicles: trips.length };
+        }
+
+        function buildDemoFinanceSummary(trips) {
+            const grouped = trips.reduce((acc, trip) => {
+                const key = String(trip.departure_date || new Date().toISOString()).slice(0, 10);
+                if (!acc[key]) acc[key] = { period_start: key, trip_count: 0, revenue_total: 0, expense_total: 0, profit: 0 };
+                acc[key].trip_count += 1;
+                acc[key].revenue_total += Number(trip.total_revenue || 0);
+                acc[key].expense_total += Number(trip.total_expense || 0);
+                acc[key].profit = acc[key].revenue_total - acc[key].expense_total;
+                return acc;
+            }, {});
+            const periods = Object.values(grouped);
+            return {
+                period: $('period-filter').value,
+                periods,
+                totals: {
+                    trip_count: periods.reduce((sum, row) => sum + row.trip_count, 0),
+                    revenue_total: periods.reduce((sum, row) => sum + row.revenue_total, 0),
+                    expense_total: periods.reduce((sum, row) => sum + row.expense_total, 0),
+                    profit: periods.reduce((sum, row) => sum + row.profit, 0),
+                },
+            };
+        }
+
+        function dailyProfitTotals(rows) {
+            return {
+                vehicle_count: rows.length,
+                rent_total: rows.reduce((sum, row) => sum + Number(row.rent_amount || 0), 0),
+                cost_total: rows.reduce((sum, row) => sum + Number(row.daily_total_cost || 0), 0),
+                revenue_total: rows.reduce((sum, row) => sum + Number(row.actual_daily_total_revenue || 0), 0),
+                net_profit_total: rows.reduce((sum, row) => sum + Number(row.actual_net_profit || 0), 0),
+                daily_net_profit_total: rows.reduce((sum, row) => sum + Number(row.daily_net_profit || 0), 0),
+            };
+        }
+
+        function buildDemoDailyProfit(trips) {
+            const requestedDate = $('from-date-filter').value || $('to-date-filter').value;
+            let selectedTrips = trips;
+            let reportDate = requestedDate;
+            if (requestedDate) {
+                selectedTrips = trips.filter((trip) => String(trip.departure_date || '').slice(0, 10) === requestedDate);
+            } else if (trips.length) {
+                reportDate = trips.map((trip) => String(trip.departure_date || '').slice(0, 10)).sort().reverse()[0];
+                selectedTrips = trips.filter((trip) => String(trip.departure_date || '').slice(0, 10) === reportDate);
+            }
+            const rows = selectedTrips.map((trip, index) => {
+                const revenue = Number(trip.total_revenue || 0);
+                const cost = Number(trip.total_expense || trip.payment_request_total || 0);
+                const profit = Math.max(0, revenue - cost);
+                const destination = Array.isArray(trip.destinations) ? trip.destinations.join(', ') : (trip.destination || 'Destination');
+                return {
+                    no: index + 1,
+                    driver_name: trip.driver_name || 'Unassigned',
+                    plate_number: trip.vehicle_plate || 'N/A',
+                    rent_amount: revenue,
+                    daily_total_cost: cost,
+                    actual_daily_total_revenue: revenue,
+                    actual_net_profit: profit,
+                    daily_net_profit: profit,
+                    remarks: `Vehicle rental revenue from ${trip.origin || 'TOP Factory'}-${destination}`,
+                    trip_id: trip.id,
+                    report_date: String(trip.departure_date || reportDate || '').slice(0, 10),
+                };
+            });
+            return { report_date: reportDate, rows, totals: dailyProfitTotals(rows) };
+        }
+
+        function renderKpis() {
+            const summary = dashboardData.summary || {};
+            const payment = dashboardData.payment_summary || {};
+            const income = reportData.incomeStatement || {};
+            const cards = [
+                ['Vehicles', summary.total_vehicles || 0, 'truck', 'blue'],
+                ['Trips', summary.total_journeys || income.trip_count || 0, 'route', 'blue'],
+                ['Revenue', money(income.revenue_total ?? dashboardData.total_revenue), 'badge-dollar-sign', 'green'],
+                ['Expense', money(income.expense_total ?? dashboardData.total_expense), 'receipt-text', 'red'],
+                ['Pending Customer', money(payment.customer_pending_total || 0), 'clock', 'red'],
+            ];
+            $('report-kpis').innerHTML = cards.map(([label, value, icon, tone]) => `
+                <div class="card">
+                    <div class="card-top">
+                        <div class="card-label">${clean(label)}</div>
+                        <span class="card-icon"><i data-lucide="${clean(icon)}" class="icon"></i></span>
+                    </div>
+                    <div class="card-value ${tone}">${clean(value)}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderCurrentLocation() {
+            $('visual-report').innerHTML = '';
+            renderTable(
+                ['Trip', 'Vehicle', 'Driver', 'Route', 'Current Location', 'Days', 'State'],
+                reportData.currentLocation.map((row) => reportRow([
+                    row.reference || row.trip_id,
+                    row.vehicle_plate || 'N/A',
+                    row.driver_name || 'Unassigned',
+                    `${row.departure_name || 'N/A'} -> ${row.destination_name || 'N/A'}`,
+                    row.current_location_name || row.current_location_note || 'N/A',
+                    row.current_location_days || 0,
+                    statePill(row.state),
+                ], row.state, '', `${row.reference || ''} ${row.vehicle_plate || ''} ${row.driver_name || ''} ${row.current_location_name || ''} ${row.current_location_note || ''}`))
+            );
+        }
+
+        function locationShareText(locations) {
+            const today = new Date().toISOString().slice(0, 10);
+            const lines = [`Fleet location report - ${today}`];
+            locations.forEach((location) => {
+                lines.push(`${location.location_name}: ${location.vehicle_count} vehicles`);
+                (location.vehicles || []).slice(0, 5).forEach((vehicle) => {
+                    lines.push(`- ${vehicle.vehicle_plate || 'N/A'} | ${vehicle.driver_name || 'Unassigned'} | ${vehicle.state || 'open'}`);
+                });
+            });
+            return lines.join('\n');
+        }
+
+        function renderLocationSummary() {
+            const locations = reportData.currentLocationSummary?.locations || [];
+            const shareText = locationShareText(locations);
+            $('visual-report').innerHTML = `
+                <div class="location-cards">
+                    ${locations.map((location) => `
+                        <div class="location-card">
+                            <div class="location-name">${clean(location.location_name)}</div>
+                            <div class="location-count">${clean(location.vehicle_count)}</div>
+                            <div class="location-meta">vehicles at or toward this location</div>
+                            <div class="location-tooltip">
+                                ${(location.vehicles || []).slice(0, 8).map((vehicle) => `
+                                    <div>${clean(vehicle.vehicle_plate || 'N/A')} - ${clean(vehicle.driver_name || 'Unassigned')} - ${clean(vehicle.state || 'open')}</div>
+                                `).join('') || 'No vehicle detail'}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="share-report">
+                    <div class="panel-header" style="padding:0 0 12px 0;border-bottom:0">
+                        <div>
+                            <div class="share-title">WhatsApp Location Report</div>
+                            <div class="panel-subtitle">Copy or download this text card for sharing.</div>
+                        </div>
+                        <div class="controls">
+                            <button class="btn" type="button" id="copy-location-card"><i data-lucide="copy" class="icon"></i>Copy</button>
+                            <button class="btn" type="button" id="download-location-card"><i data-lucide="download" class="icon"></i>Download</button>
+                        </div>
+                    </div>
+                    <textarea class="share-text" id="location-share-text" readonly>${clean(shareText)}</textarea>
+                </div>
+            `;
+            const downloadButton = $('download-location-card');
+            const copyButton = $('copy-location-card');
+            if (copyButton) {
+                copyButton.addEventListener('click', () => copyText($('location-share-text').value));
+            }
+            if (downloadButton) {
+                downloadButton.addEventListener('click', () => downloadText('fleet-location-report.txt', $('location-share-text').value));
+            }
+            renderTable(
+                ['Location', 'Vehicles', 'Sample Plates'],
+                locations.map((location) => reportRow([
+                    location.location_name,
+                    location.vehicle_count,
+                    (location.vehicles || []).slice(0, 8).map((vehicle) => vehicle.vehicle_plate || 'N/A').join(', '),
+                ], '', '', `${location.location_name} ${(location.vehicles || []).map((vehicle) => vehicle.vehicle_plate || '').join(' ')}`))
+            );
+        }
+
+        function renderPaymentRequests() {
+            $('visual-report').innerHTML = '';
+            renderTable(
+                ['Request', 'Trip', 'Vehicle', 'Requester', 'Supervisor', 'State', 'Date', 'Approved On', 'Amount'],
+                reportData.paymentRequests.map((row) => reportRow([
+                    row.name || row.reference || row.id,
+                    row.trip_reference || row.trip_id || 'N/A',
+                    row.vehicle_plate || 'N/A',
+                    row.requester_name || 'N/A',
+                    row.supervisor_name || 'N/A',
+                    statePill(row.state),
+                    row.date || 'N/A',
+                    row.approved_on || 'N/A',
+                    money(row.total_amount),
+                ], row.state, paymentStatus(row.state), `${row.name || ''} ${row.reference || ''} ${row.trip_reference || ''} ${row.vehicle_plate || ''} ${row.requester_name || ''} ${row.supervisor_name || ''} ${row.state || ''}`))
+            );
+        }
+
+        function renderFinanceSummary() {
+            const summary = reportData.financeSummary || { periods: [], totals: {} };
+            const totals = summary.totals || {};
+            $('visual-report').innerHTML = `
+                <div class="summary-grid">
+                    <div class="summary-card"><div class="summary-title">Trips</div><div class="summary-value blue">${clean(totals.trip_count || 0)}</div></div>
+                    <div class="summary-card"><div class="summary-title">Revenue</div><div class="summary-value green">${money(totals.revenue_total || 0)}</div></div>
+                    <div class="summary-card"><div class="summary-title">Cost</div><div class="summary-value red">${money(totals.expense_total || 0)}</div></div>
+                    <div class="summary-card"><div class="summary-title">Profit</div><div class="summary-value ${(totals.profit || 0) >= 0 ? 'green' : 'red'}">${money(totals.profit || 0)}</div></div>
+                    <div class="summary-card"><div class="summary-title">Period</div><div class="summary-value blue">${clean(summary.period || $('period-filter').value)}</div></div>
+                    <div class="summary-card"><div class="summary-title">Rows</div><div class="summary-value blue">${clean((summary.periods || []).length)}</div></div>
+                </div>
+            `;
+            renderTable(
+                ['Period', 'Trips', 'Revenue', 'Cost', 'Profit'],
+                (summary.periods || []).map((row) => reportRow([
+                    row.period_start,
+                    row.trip_count,
+                    money(row.revenue_total),
+                    money(row.expense_total),
+                    money(row.profit),
+                ], '', '', `${row.period_start} ${row.trip_count} ${row.revenue_total} ${row.expense_total} ${row.profit}`))
+            );
+        }
+
+        function dailyProfitShareText(report) {
+            const rows = report.rows || [];
+            const totals = report.totals || {};
+            const lines = [
+                `DAILY COST AND PROFIT REPORT`,
+                `Date: ${report.report_date || new Date().toISOString().slice(0, 10)}`,
+                '',
+                ['No', 'Name of drivers', 'Plate no', 'Rent amount', 'Daily total cost', 'Actual daily total revenue', 'Actual Net profit', 'Daily net profit', 'Remarks'].join('\t'),
+            ];
+            rows.forEach((row) => {
+                lines.push([
+                    row.no,
+                    row.driver_name || 'Unassigned',
+                    row.plate_number || 'N/A',
+                    amount(row.rent_amount),
+                    amount(row.daily_total_cost),
+                    amount(row.actual_daily_total_revenue),
+                    amount(row.actual_net_profit),
+                    amount(row.daily_net_profit),
+                    row.remarks || '',
+                ].join('\t'));
+            });
+            lines.push(['', 'TOTAL', '', amount(totals.rent_total), amount(totals.cost_total), amount(totals.revenue_total), amount(totals.net_profit_total), amount(totals.daily_net_profit_total), ''].join('\t'));
+            lines.push(`Total Daily Profit: ${amount(totals.daily_net_profit_total || 0)}`);
+            return lines.join('\n');
+        }
+
+        function renderDailyProfit() {
+            const report = reportData.dailyProfit || { rows: [], totals: {} };
+            const rows = report.rows || [];
+            const totals = report.totals || {};
+            const shareText = dailyProfitShareText(report);
+            $('visual-report').innerHTML = `
+                <div class="report-sheet">
+                    <div class="report-sheet-header">
+                        <div class="report-sheet-title">Daily Cost and Profit Report</div>
+                        <div class="report-sheet-date">Date: ${clean(report.report_date || 'Latest')}</div>
+                    </div>
+                    <table class="exact-report-table">
+                        <thead>
+                            <tr>
+                                <th>No</th>
+                                <th>Name of drivers</th>
+                                <th>Plate no</th>
+                                <th class="number-cell">Rent amount</th>
+                                <th class="number-cell">Daily total cost</th>
+                                <th class="number-cell">Actual daily total revenue</th>
+                                <th class="number-cell">Actual Net profit</th>
+                                <th class="number-cell">Daily net profit</th>
+                                <th>Remarks</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map((row) => `
+                                <tr>
+                                    <td>${clean(row.no)}</td>
+                                    <td>${clean(row.driver_name || 'Unassigned')}</td>
+                                    <td>${clean(row.plate_number || 'N/A')}</td>
+                                    <td class="number-cell">${amount(row.rent_amount)}</td>
+                                    <td class="number-cell">${amount(row.daily_total_cost)}</td>
+                                    <td class="number-cell">${amount(row.actual_daily_total_revenue)}</td>
+                                    <td class="number-cell">${amount(row.actual_net_profit)}</td>
+                                    <td class="number-cell">${amount(row.daily_net_profit)}</td>
+                                    <td>${clean(row.remarks || '')}</td>
+                                </tr>
+                            `).join('') || `<tr><td colspan="9" class="empty">No daily report rows.</td></tr>`}
+                            <tr class="total-row">
+                                <td></td>
+                                <td>Total</td>
+                                <td></td>
+                                <td class="number-cell">${amount(totals.rent_total)}</td>
+                                <td class="number-cell">${amount(totals.cost_total)}</td>
+                                <td class="number-cell">${amount(totals.revenue_total)}</td>
+                                <td class="number-cell">${amount(totals.net_profit_total)}</td>
+                                <td class="number-cell">${amount(totals.daily_net_profit_total)}</td>
+                                <td>Total Daily Profit: ${amount(totals.daily_net_profit_total)}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="daily-report-actions">
+                    <button class="btn" type="button" id="copy-daily-profit-card"><i data-lucide="copy" class="icon"></i>Copy</button>
+                    <button class="btn" type="button" id="download-daily-profit-card"><i data-lucide="download" class="icon"></i>Download</button>
+                </div>
+            `;
+            const copyButton = $('copy-daily-profit-card');
+            const downloadButton = $('download-daily-profit-card');
+            if (copyButton) copyButton.addEventListener('click', () => copyText(shareText));
+            if (downloadButton) downloadButton.addEventListener('click', () => downloadDailyExcel(report));
+            renderTable(
+                ['No', 'Driver', 'Plate No', 'Rent Amount', 'Daily Total Cost', 'Actual Daily Revenue', 'Actual Net Profit', 'Daily Net Profit', 'Remarks'],
+                rows.map((row) => reportRow([
+                    row.no,
+                    row.driver_name || 'Unassigned',
+                    row.plate_number || 'N/A',
+                    money(row.rent_amount),
+                    money(row.daily_total_cost),
+                    money(row.actual_daily_total_revenue),
+                    money(row.actual_net_profit),
+                    money(row.daily_net_profit),
+                    row.remarks || '',
+                ], '', '', `${row.driver_name || ''} ${row.plate_number || ''} ${row.remarks || ''}`))
+            );
+            const tableWrap = $('report-table').closest('.table-wrap');
+            if (tableWrap) tableWrap.style.display = 'none';
+        }
+
+        function renderIncomeStatement() {
+            $('visual-report').innerHTML = '';
+            const income = reportData.incomeStatement || {};
+            renderTable(
+                ['Metric', 'Value'],
+                [
+                    ['Trip Count', income.trip_count || 0],
+                    ['Confirmed / Approved Receivables', income.receivable_count || 0],
+                    ['Approved Payment Request Lines', income.payment_request_count || 0],
+                    ['Revenue', money(income.revenue_total)],
+                    ['Expense', money(income.expense_total)],
+                    ['Profit', money(income.profit)],
+                ]
+            );
+        }
+
+        function renderTripRegister() {
+            $('visual-report').innerHTML = '';
+            const trips = Array.isArray(dashboardData.recent_journeys) ? dashboardData.recent_journeys : [];
+            renderTable(
+                ['Trip', 'Vehicle', 'Driver', 'Customer', 'Route', 'Revenue', 'Paid', 'Pending', 'State'],
+                trips.map((trip) => reportRow([
+                    trip.id,
+                    trip.vehicle_plate || 'N/A',
+                    trip.driver_name || 'Unassigned',
+                    trip.customer_name || 'N/A',
+                    `${trip.origin || 'N/A'} -> ${Array.isArray(trip.destinations) ? trip.destinations.join(', ') : 'N/A'}`,
+                    money(trip.total_revenue),
+                    money(trip.paid_amount),
+                    money(trip.pending_payment),
+                    statePill(trip.status),
+                ], trip.status, Number(trip.pending_payment || 0) > 0 ? 'pending' : 'paid', `${trip.id || ''} ${trip.vehicle_plate || ''} ${trip.driver_name || ''} ${trip.customer_name || ''} ${trip.origin || ''} ${trip.status || ''}`))
+            );
+        }
+
+        function reportRow(cells, status, paymentState, searchText) {
+            return { cells, status: normalizeStatus(status), paymentStatus: paymentState || '', searchText: String(searchText || '').toLowerCase() };
+        }
+
+        function normalizeStatus(status) {
+            const raw = String(status || '').toLowerCase();
+            const map = {
+                planned: 'available',
+                in_progress: 'dispatched',
+                completed: 'done',
+                cancel: 'cancelled',
+                canceled: 'cancelled',
+            };
+            return map[raw] || raw;
+        }
+
+        function paymentStatus(state) {
+            const normalized = normalizeStatus(state);
+            if (['paid', 'posted', 'done'].includes(normalized)) return 'paid';
+            if (['approved'].includes(normalized)) return 'approved';
+            if (['confirmed'].includes(normalized)) return 'confirmed';
+            if (['draft'].includes(normalized)) return 'draft';
+            return normalized || 'pending';
+        }
+
+        function statePill(state) {
+            const normalized = String(state || 'unknown').replace('_', ' ');
+            const good = ['done', 'approved', 'paid', 'posted', 'confirmed'].includes(String(state || '').toLowerCase());
+            return { html: `<span class="pill ${good ? 'good' : 'info'}">${clean(normalized)}</span>` };
+        }
+
+        async function copyText(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                updateModeBadge(dashboardData._mode || currentMode, 'Copied report text');
+                setTimeout(() => updateModeBadge(dashboardData._mode || currentMode, dashboardData._warning || ''), 1200);
+                return;
+            }
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            document.execCommand('copy');
+            textarea.remove();
+            updateModeBadge(dashboardData._mode || currentMode, 'Copied report text');
+            setTimeout(() => updateModeBadge(dashboardData._mode || currentMode, dashboardData._warning || ''), 1200);
+        }
+
+        function downloadText(filename, text) {
+            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function downloadDailyExcel(report) {
+            const rows = report.rows || [];
+            const totals = report.totals || {};
+            const tableRows = [
+                ['No', 'Name of drivers', 'Plate no', 'Rent amount', 'Daily total cost', 'Actual daily total revenue', 'Actual Net profit', 'Daily net profit', 'Remarks'],
+                ...rows.map((row) => [
+                    row.no,
+                    row.driver_name || 'Unassigned',
+                    row.plate_number || 'N/A',
+                    row.rent_amount || 0,
+                    row.daily_total_cost || 0,
+                    row.actual_daily_total_revenue || 0,
+                    row.actual_net_profit || 0,
+                    row.daily_net_profit || 0,
+                    row.remarks || '',
+                ]),
+                ['', 'Total', '', totals.rent_total || 0, totals.cost_total || 0, totals.revenue_total || 0, totals.net_profit_total || 0, totals.daily_net_profit_total || 0, 'Total Daily Profit'],
+            ];
+            const html = `
+                <html><head><meta charset="UTF-8"></head><body>
+                <table>${tableRows.map((row) => `<tr>${row.map((cell) => `<td>${clean(cell)}</td>`).join('')}</tr>`).join('')}</table>
+                </body></html>
+            `;
+            const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `daily-profit-${report.report_date || new Date().toISOString().slice(0, 10)}.xls`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function renderTable(headers, rows) {
+            const normalizedRows = rows.map((row) => Array.isArray(row) ? reportRow(row, '', '', row.join(' ')) : row);
+            const statusFilter = $('status-filter').value;
+            const paymentFilter = $('payment-status-filter').value;
+            const query = $('report-search').value.trim().toLowerCase();
+            const filteredRows = normalizedRows.filter((row) => {
+                if (currentReport === 'income-statement') return true;
+                const statusOk = statusFilter === 'all' || row.status === statusFilter;
+                const paymentOk = paymentFilter === 'all' || row.paymentStatus === paymentFilter;
+                const searchOk = !query || row.searchText.includes(query) || row.cells.map((cell) => cell && cell.html ? cell.html : String(cell ?? '')).join(' ').toLowerCase().includes(query);
+                return statusOk && paymentOk && searchOk;
+            });
+            exportHeaders = headers;
+            exportRows = filteredRows.map((row) => row.cells.map((cell) => cell && cell.html ? cell.html.replace(/<[^>]+>/g, '') : String(cell ?? '')));
+            if (!filteredRows.length) {
+                $('report-table').innerHTML = `<tbody><tr><td class="empty">No records.</td></tr></tbody>`;
+                return;
+            }
+            $('report-table').innerHTML = `
+                <thead><tr>${headers.map((head) => `<th>${clean(head)}</th>`).join('')}</tr></thead>
+                <tbody>${filteredRows.map((row) => `<tr>${row.cells.map((cell) => `<td>${cell && cell.html ? cell.html : clean(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+            `;
+        }
+
+        function renderReport() {
+            document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.report === currentReport));
+            $('report-select').value = currentReport;
+            const tableWrap = $('report-table').closest('.table-wrap');
+            if (tableWrap) tableWrap.style.display = '';
+            const subtitles = {
+                'current-location': 'Current location report from trip.timeline and current_location fields',
+                'location-summary': 'Vehicle count by current location with hover details and WhatsApp-ready text',
+                'payment-requests': 'Trip expense payment requests linked by trip_id',
+                'finance-summary': 'Daily, weekly, or monthly revenue, cost, and profit',
+                'daily-profit': 'WhatsApp-ready daily cost, revenue, and net profit by driver and plate',
+                'income-statement': 'Confirmed/approved receivables minus approved payment requests',
+                'trip-register': 'Dashboard trip register from the selected data source',
+            };
+            $('report-subtitle').textContent = subtitles[currentReport] || 'Report';
+            if (currentReport === 'payment-requests') renderPaymentRequests();
+            else if (currentReport === 'location-summary') renderLocationSummary();
+            else if (currentReport === 'finance-summary') renderFinanceSummary();
+            else if (currentReport === 'daily-profit') renderDailyProfit();
+            else if (currentReport === 'income-statement') renderIncomeStatement();
+            else if (currentReport === 'trip-register') renderTripRegister();
+            else renderCurrentLocation();
+        }
+
+        function renderAll() {
+            renderKpis();
+            renderReport();
+            refreshIcons();
+        }
+
+        document.querySelector('.tabs').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-report]');
+            if (!button) return;
+            currentReport = button.dataset.report;
+            renderAll();
+        });
+
+        $('mode-select').addEventListener('change', (event) => {
+            currentMode = event.target.value;
+            localStorage.setItem('fleetDashboardMode', currentMode);
+            loadReports();
+        });
+
+        $('theme-toggle').addEventListener('click', () => {
+            currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('fleetTheme', currentTheme);
+            applyTheme();
+        });
+
+        $('report-select').addEventListener('change', (event) => {
+            currentReport = event.target.value;
+            renderAll();
+        });
+
+        $('generate-report').addEventListener('click', () => {
+            if (currentReport === 'finance-summary') {
+                refreshFinanceSummary().catch((error) => {
+                    updateModeBadge(currentMode, error.message || 'Load failed');
+                });
+                return;
+            }
+            if (currentReport === 'daily-profit') {
+                refreshDailyProfit().catch((error) => {
+                    updateModeBadge(currentMode, error.message || 'Load failed');
+                });
+                return;
+            }
+            renderAll();
+        });
+        $('report-search').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') renderAll();
+        });
+        $('status-filter').addEventListener('change', renderAll);
+        $('payment-status-filter').addEventListener('change', renderAll);
+        $('period-filter').addEventListener('change', () => {
+            if (currentReport === 'finance-summary') $('generate-report').click();
+        });
+        $('from-date-filter').addEventListener('change', () => {
+            if (currentReport === 'finance-summary' || currentReport === 'daily-profit') $('generate-report').click();
+        });
+        $('to-date-filter').addEventListener('change', () => {
+            if (currentReport === 'finance-summary' || currentReport === 'daily-profit') $('generate-report').click();
+        });
+
+        $('copy-whatsapp').addEventListener('click', () => {
+            if (currentReport === 'daily-profit') {
+                copyText(dailyProfitShareText(reportData.dailyProfit || { rows: [], totals: {} })).catch((error) => updateModeBadge(currentMode, error.message || 'Copy failed'));
+                return;
+            }
+            if (currentReport === 'location-summary') {
+                copyText(locationShareText(reportData.currentLocationSummary?.locations || [])).catch((error) => updateModeBadge(currentMode, error.message || 'Copy failed'));
+                return;
+            }
+            copyText(exportRows.map((row) => row.join(' | ')).join('\n')).catch((error) => updateModeBadge(currentMode, error.message || 'Copy failed'));
+        });
+
+        $('export-excel').addEventListener('click', () => {
+            const rows = [exportHeaders, ...exportRows];
+            const html = `
+                <html><head><meta charset="UTF-8"></head><body>
+                <table>${rows.map((row) => `<tr>${row.map((cell) => `<td>${clean(cell)}</td>`).join('')}</tr>`).join('')}</table>
+                </body></html>
+            `;
+            const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `fleet-${currentReport}-${new Date().toISOString().slice(0, 10)}.xls`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        });
+
+        applyTheme();
+        loadReports();
     </script>
 </body>
 </html>

@@ -36,6 +36,10 @@ class MockVehicle:
     driver_id: Optional[int]
     state_id: Optional[int]
     active: bool = True
+    mayet_status: Optional[str] = None
+    mayet_latitude: Optional[float] = None
+    mayet_longitude: Optional[float] = None
+    mayet_captured_at: Optional[str] = None
 
 
 @dataclass
@@ -81,6 +85,10 @@ class MockJourney:
     tolls: float = 0.0
     maintenance: float = 0.0
     other_expense: float = 0.0
+    paid_amount: float = 0.0
+    pending_payment: float = 0.0
+    paid_expense_amount: float = 0.0
+    pending_expense_payment: float = 0.0
 
     @property
     def origin(self) -> str:
@@ -262,6 +270,8 @@ class MockDatabase:
             total_expense = sum(trip.expense for trip in trips)
             total_fuel = sum(t.distance_km * random.uniform(1.5, 3.0) for t in trips)  # Approximate
             total_allowance = sum(random.uniform(500, 1500) for _ in trips)
+            paid_ratio = random.uniform(0.35, 1.0)
+            expense_paid_ratio = random.uniform(0.25, 0.95)
             
             # status is based on the last trip
             final_status = trips[-1].status if trips else "planned"
@@ -283,6 +293,10 @@ class MockDatabase:
                 tolls=round(sum(t.expense * 0.12 for t in trips), 2),
                 maintenance=round(sum(t.expense * 0.08 for t in trips), 2),
                 other_expense=round(sum(t.expense * 0.1 for t in trips), 2),
+                paid_amount=round(total_revenue * paid_ratio, 2),
+                pending_payment=round(total_revenue * (1 - paid_ratio), 2),
+                paid_expense_amount=round(total_expense * expense_paid_ratio, 2),
+                pending_expense_payment=round(total_expense * (1 - expense_paid_ratio), 2),
             )
             self.journeys.append(j)
 
@@ -351,6 +365,10 @@ class MockDatabase:
             "id": j.id,
             "vehicle_plate": vehicle.license_plate if vehicle else "Unknown",
             "vehicle_brand": vehicle.brand if vehicle else "Unknown",
+            "mayet_status": vehicle.mayet_status if vehicle else None,
+            "mayet_latitude": vehicle.mayet_latitude if vehicle else None,
+            "mayet_longitude": vehicle.mayet_longitude if vehicle else None,
+            "mayet_captured_at": vehicle.mayet_captured_at if vehicle else None,
             "driver_name": driver.name if driver else "Unknown",
             "driver_phone": driver.phone if driver else "",
             "origin": j.origin,
@@ -361,6 +379,15 @@ class MockDatabase:
             "total_revenue": j.total_revenue,
             "total_expense": j.total_expense,
             "profit": round(profit, 2),
+            "paid_amount": j.paid_amount,
+            "pending_payment": j.pending_payment,
+            "payment_request_total": j.total_expense,
+            "paid_expense_amount": j.paid_expense_amount,
+            "pending_expense_payment": j.pending_expense_payment,
+            "customer_name": "Demo Customer",
+            "order_receivable_count": len(j.trips),
+            "payment_request_count": len(j.trips),
+            "order_count": len(j.trips),
             "fuel_cost": j.fuel_cost,
             "driver_allowance": j.driver_allowance,
             "tolls": j.tolls,
@@ -395,11 +422,33 @@ class MockDatabase:
             return None
         return self._journey_to_dict(journey)
 
+    def seed_mayet_vehicle_statuses(self, positions: list[dict]) -> int:
+        """Use cached Mayet vehicles to make demo trips look like live fleet trips."""
+        updated = 0
+        usable = [p for p in positions if p.get("plate")]
+        for vehicle, position in zip(self.vehicles, usable):
+            vehicle.license_plate = str(position.get("plate"))
+            vehicle.mayet_status = position.get("location")
+            vehicle.mayet_latitude = position.get("latitude")
+            vehicle.mayet_longitude = position.get("longitude")
+            vehicle.mayet_captured_at = position.get("captured_at")
+            updated += 1
+        return updated
+
     def get_full_dashboard(self) -> dict:
         """Return everything the dashboard needs in one call."""
         total_revenue = sum(j.total_revenue for j in self.journeys)
         total_expense = sum(j.total_expense for j in self.journeys)
+        customer_paid = sum(j.paid_amount for j in self.journeys)
+        customer_pending = sum(j.pending_payment for j in self.journeys)
+        vendor_paid = sum(j.paid_expense_amount for j in self.journeys)
+        vendor_pending = sum(j.pending_expense_payment for j in self.journeys)
         active_count = sum(1 for j in self.journeys if j.status in ("planned", "in_progress"))
+        profit = total_revenue - total_expense
+        collection_rate = (customer_paid / total_revenue * 100) if total_revenue else 0
+        vendor_clearance_rate = (vendor_paid / total_expense * 100) if total_expense else 0
+        active_trip_ratio = (active_count / len(self.journeys) * 100) if self.journeys else 0
+        profit_margin = (profit / total_revenue * 100) if total_revenue else 0
         return {
             "summary": self.get_summary(),
             "vehicles_by_brand": self.get_vehicles_by_brand(),
@@ -408,7 +457,32 @@ class MockDatabase:
             "active_journey_count": active_count,
             "total_revenue": round(total_revenue, 2),
             "total_expense": round(total_expense, 2),
-            "total_profit": round(total_revenue - total_expense, 2),
+            "total_profit": round(profit, 2),
+            "payment_summary": {
+                "receivable_total": round(total_revenue, 2),
+                "customer_paid_total": round(customer_paid, 2),
+                "customer_pending_total": round(customer_pending, 2),
+                "receivable_trip_count": len(self.journeys),
+                "expense_total": round(total_expense, 2),
+                "payment_request_total": round(total_expense, 2),
+                "vendor_paid_total": round(vendor_paid, 2),
+                "vendor_pending_total": round(vendor_pending, 2),
+                "payment_request_trip_count": len(self.journeys),
+            },
+            "custom_kpis": [
+                {"label": "Customer Payment Collected", "value": round(customer_paid, 2), "format": "money", "tone": "green"},
+                {"label": "Pending Customer Payment", "value": round(customer_pending, 2), "format": "money", "tone": "red"},
+                {"label": "Vendor Payments Cleared", "value": round(vendor_paid, 2), "format": "money", "tone": "green"},
+                {"label": "Pending Vendor Payment", "value": round(vendor_pending, 2), "format": "money", "tone": "amber"},
+                {"label": "Collection Rate", "value": round(collection_rate, 1), "format": "percent", "tone": "blue"},
+                {"label": "Active Trip Ratio", "value": round(active_trip_ratio, 1), "format": "percent", "tone": "blue"},
+            ],
+            "kpi_summary": {
+                "collection_rate": round(collection_rate, 1),
+                "vendor_clearance_rate": round(vendor_clearance_rate, 1),
+                "active_trip_ratio": round(active_trip_ratio, 1),
+                "profit_margin": round(profit_margin, 1),
+            },
             "base_location": BASE_LOCATION,
         }
 
