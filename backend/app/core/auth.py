@@ -10,40 +10,72 @@ from typing import Optional
 import xmlrpc.client
 
 import asyncpg
+import bcrypt
 
 from fastapi import Cookie, Depends, HTTPException, Request
+from jose import jwt, JWTError
 
 from app.core.settings import get_settings
 
 
 AUTH_COOKIE_NAME = "fleet_auth"
 
-
-def _dotenv_value(key: str) -> Optional[str]:
-    env_path = Path(__file__).resolve().parents[3] / ".env"
-    if not env_path.exists():
-        return None
-    for line in env_path.read_text().splitlines():
-        if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
-            continue
-        env_key, value = line.split("=", 1)
-        if env_key.strip() == key:
-            return value.strip().strip('"').strip("'")
-    return None
-
-
 def _config_value(key: str, default: str) -> str:
-    return os.getenv(key) or _dotenv_value(key) or default
+    # First try env var, then .env file, then default
+    env_val = os.getenv(key)
+    if env_val:
+        return env_val
+    env_path = Path(__file__).resolve().parents[3] / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            env_key, value = line.split("=", 1)
+            if env_key.strip() == key:
+                return value.strip().strip('"').strip("'")
+    return default
 
 
 AUTH_SESSION_SECONDS = int(_config_value("FLEET_AUTH_SESSION_SECONDS", str(12 * 60 * 60)))
-AUTH_SECRET = _config_value("FLEET_AUTH_SECRET", "change-this-fleet-auth-secret")
+AUTH_SECRET = _config_value("FLEET_AUTH_SECRET", "").strip()
 
-USERS = {
-    "danat.yoh": {"username": "danat.yoh", "password": "123", "role": "manager", "name": "Manager"},
-    "alula.yem": {"username": "alula.yem", "password": "123", "role": "supervisor", "name": "Supervisor"},
-    "barbra.sem": {"username": "barbra.sem", "password": "123", "role": "salesperson", "name": "Salesperson"},
-}
+# Security: crash on startup if secret not set or is default
+if not AUTH_SECRET or AUTH_SECRET == "change-this-fleet-auth-secret":
+    raise RuntimeError(
+        "FLEET_AUTH_SECRET must be set to a strong random secret. "
+        "Generate one with: openssl rand -base64 32"
+    )
+
+
+# Load users from environment; passwords MUST be bcrypt hashed externally.
+# Example env: FLEET_USERS=danat.yoh:$2b$12$...,alula.yem:$2b$12$...
+# Falls back to known insecure dev defaults ONLY if FLEET_INSECURE_DEV=1
+_USERS_RAW = _config_value("FLEET_USERS", "")
+USERS = {}
+if _USERS_RAW:
+    for entry in _USERS_RAW.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            u, p = entry.split(":", 1)
+            USERS[u.strip().lower()] = {"username": u.strip(), "password": p.strip()}
+elif os.getenv("FLEET_INSECURE_DEV") == "1":
+    import warnings
+    warnings.warn(
+        "FLEET_INSECURE_DEV is set. Using insecure plaintext dev passwords. "
+        "NEVER use this in production.",
+        stacklevel=2,
+    )
+    # Insecure dev fallbacks
+    USERS = {
+        "danat.yoh": {"username": "danat.yoh", "password": "**REDACTED**", "role": "manager", "name": "Manager"},
+        "alula.yem": {"username": "alula.yem", "password": "**REDACTED**", "role": "supervisor", "name": "Supervisor"},
+        "barbra.sem": {"username": "barbra.sem", "password": "**REDACTED**", "role": "salesperson", "name": "Salesperson"},
+    }
+else:
+    raise RuntimeError(
+        "FLEET_USERS env var not set and FLEET_INSECURE_DEV is disabled. "
+        "Set FLEET_USERS or run with FLEET_INSECURE_DEV=1 for local dev only."
+    )
 
 ROLE_BY_LOGIN = {
     "danat.yoh": "manager",
@@ -60,8 +92,14 @@ def _b64decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
 
-def _sign(payload: str) -> str:
-    return hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+def _hash_password(password: str) -> str:
+    """Hash a plaintext password using bcrypt."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    """Verify a plaintext password against a bcrypt hash."""
+    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 
 def public_user(user: dict) -> dict:
@@ -144,44 +182,13 @@ def _authenticate_odoo_xmlrpc(username: str, password: str) -> Optional[int]:
     return int(uid) if uid else None
 
 
-async def authenticate(username: str, password: str) -> Optional[dict]:
-    login = (username or "").strip().lower()
-    if not login or not password:
-        return None
-
-    odoo_uid = None
-    try:
-        odoo_uid = await asyncio.wait_for(
-            asyncio.to_thread(_authenticate_odoo_xmlrpc, login, password),
-            timeout=get_settings().odoo_role_lookup_timeout_seconds,
-        )
-    except Exception:
-        odoo_uid = None
-    if odoo_uid:
-        odoo_user = await _odoo_user_from_db(login)
-        if odoo_user:
-            odoo_user["odoo_user_id"] = odoo_uid
-            odoo_user["auth_source"] = "odoo"
-            return odoo_user
-        return {
-            "username": login,
-            "name": login,
-            "role": ROLE_BY_LOGIN.get(login, "salesperson"),
-            "odoo_user_id": odoo_uid,
-            "auth_source": "odoo",
-        }
-
-    user = USERS.get(login)
-    if not user or not hmac.compare_digest(str(user["password"]), str(password)):
-        return None
-    odoo_user = await _odoo_user_from_db(login)
-    if odoo_user:
-        odoo_user["auth_source"] = "app+odoo-role"
-        return odoo_user
-    return {**user, "auth_source": "app"}
+# Back-compat: sign custom tokens with HMAC (used for cookie tokens, not JWT)
+def _sign(payload: str) -> str:
+    return hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def create_token(user: dict) -> str:
+    """Create a compact signed token (HMAC-based). For standard JWT use create_jwt_token."""
     payload = {
         "username": user["username"],
         "role": user["role"],
@@ -227,3 +234,53 @@ async def require_manager(user: dict = Depends(require_user)) -> dict:
     if user.get("role") != "manager":
         raise HTTPException(status_code=403, detail="Only managers can approve or update payment requests")
     return user
+
+
+async def authenticate(username: str, password: str) -> Optional[dict]:
+    login = (username or "").strip().lower()
+    if not login or not password:
+        return None
+
+    odoo_uid = None
+    try:
+        odoo_uid = await asyncio.wait_for(
+            asyncio.to_thread(_authenticate_odoo_xmlrpc, login, password),
+            timeout=get_settings().odoo_role_lookup_timeout_seconds,
+        )
+    except Exception:
+        odoo_uid = None
+    if odoo_uid:
+        odoo_user = await _odoo_user_from_db(login)
+        if odoo_user:
+            odoo_user["odoo_user_id"] = odoo_uid
+            odoo_user["auth_source"] = "odoo"
+            return odoo_user
+        return {
+            "username": login,
+            "name": login,
+            "role": ROLE_BY_LOGIN.get(login, "salesperson"),
+            "odoo_user_id": odoo_uid,
+            "auth_source": "odoo",
+        }
+
+    # App login: check bcrypt hashed password
+    user = USERS.get(login)
+    if user:
+        # Allow either bcrypt hash or plaintext (plaintext only for dev/insecure mode)
+        stored = user["password"]
+        valid = False
+        if stored.startswith("$2b$") or stored.startswith("$2a$"):
+            valid = _verify_password(password, stored)
+        else:
+            valid = hmac.compare_digest(str(user["password"]), str(password))
+        if not valid:
+            return None
+
+    if not user:
+        return None
+
+    odoo_user = await _odoo_user_from_db(login)
+    if odoo_user:
+        odoo_user["auth_source"] = "app+odoo-role"
+        return odoo_user
+    return {**user, "auth_source": "app"}
