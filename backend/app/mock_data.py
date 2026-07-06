@@ -183,16 +183,34 @@ class MockDatabase:
         for i in range(50):
             brand = random.choice(BRANDS)
             model = random.choice(MODELS[brand])
+            
+            if i == 0:
+                plate = "16652-34002"
+            elif i == 1:
+                plate = "16651-34001"
+            else:
+                plate = f"{random.randint(10000, 99999)}-{random.randint(10000, 99999)}"
+
             self.vehicles.append(
                 MockVehicle(
                     id=10000 + i,
-                    license_plate=f"TOP-{random.randint(1000, 9999)}-{chr(65+random.randint(0,25))}{chr(65+random.randint(0,25))}",
+                    license_plate=plate,
                     model=model,
                     brand=brand,
                     fuel_type=random.choice(FUEL_TYPES),
                     driver_id=random.choice(self.drivers).id if random.random() > 0.2 else None,
                     state_id=None,
                     active=True,
+                    mayet_status=random.choice([
+                        "Driving near Awash, Afar (Speed: 45km/h)",
+                        "Parked at Mille Checkpoint",
+                        "Moving through Semera, Afar (Speed: 60km/h)",
+                        "Parked at Galafi Border Crossing",
+                        "Idling at Djibouti Port Terminal",
+                        "Driving near Adama, Oromia (Speed: 70km/h)",
+                        "Resting in Mojo, Oromia",
+                        "Driving near Dire Dawa (Speed: 55km/h)"
+                    ]) if random.random() > 0.1 else None
                 )
             )
 
@@ -449,6 +467,31 @@ class MockDatabase:
         vendor_clearance_rate = (vendor_paid / total_expense * 100) if total_expense else 0
         active_trip_ratio = (active_count / len(self.journeys) * 100) if self.journeys else 0
         profit_margin = (profit / total_revenue * 100) if total_revenue else 0
+        mock_payment_requests = []
+        for i, j in enumerate(self.journeys):
+            if j.total_expense > 0:
+                v = next((v for v in self.vehicles if v.id == j.vehicle_id), None)
+                plate = v.license_plate if v else "Unknown"
+                driver = next((d.name for d in self.drivers if d.id == v.driver_id), "Unknown") if v and v.driver_id else "Unknown"
+                dest = j.destinations[0] if j.destinations else "Unknown Destination"
+                route_str = f"From {j.origin.split(',')[0]} to {dest}"
+                mock_payment_requests.append({
+                    "id": 1000 + i,
+                    "name": f"PR-{1000+i}",
+                    "trip_id": j.id,
+                    "trip_reference": route_str,
+                    "vehicle_plate": plate,
+                    "date": j.departure_date.isoformat(),
+                    "state": "approved" if i % 3 != 0 else "draft",
+                    "requester_name": driver,
+                    "supervisor_name": "Teklu Teshome" if i % 2 == 0 else "Dawit Mengistu",
+                    "total_amount": round(j.total_expense * 0.4, 2),
+                    "line_items": [
+                        {"item": "Fuel", "amount": round(j.total_expense * 0.25, 2), "description": f"{random.randint(10, 100)}L * {round(random.uniform(50, 180), 2)} = {round(j.total_expense * 0.25, 2)}"},
+                        {"item": "Per diem", "amount": round(j.total_expense * 0.15, 2), "description": "Driver allowance"},
+                    ]
+                })
+
         return {
             "summary": self.get_summary(),
             "vehicles_by_brand": self.get_vehicles_by_brand(),
@@ -469,6 +512,7 @@ class MockDatabase:
                 "vendor_pending_total": round(vendor_pending, 2),
                 "payment_request_trip_count": len(self.journeys),
             },
+            "payment_requests": mock_payment_requests,
             "custom_kpis": [
                 {"label": "Customer Payment Collected", "value": round(customer_paid, 2), "format": "money", "tone": "green"},
                 {"label": "Pending Customer Payment", "value": round(customer_pending, 2), "format": "money", "tone": "red"},

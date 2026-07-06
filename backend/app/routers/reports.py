@@ -264,6 +264,109 @@ def _fallback_income_statement() -> dict:
     }
 
 
+def _fallback_whatsapp_summary(format_type: str = "default") -> dict:
+    from app.mock_data import mock_db
+    
+    mock_data = mock_db.get_full_dashboard()
+    mock_prs = mock_data.get("payment_requests", [])
+    
+    prs_by_supervisor = {}
+    for pr in mock_prs:
+        if pr.get("total_amount", 0) <= 0:
+            continue
+        sup = pr.get("supervisor_name") or "Unassigned Supervisor"
+        if sup not in prs_by_supervisor:
+            prs_by_supervisor[sup] = []
+        prs_by_supervisor[sup].append(pr)
+
+    payment_lines = ["1. Payment Requests Summary\n"]
+    
+    if format_type == "csv":
+        payment_lines = ["Supervisor,Route,Vehicle,Driver,ExpenseItem,Amount"]
+        for sup, prs in prs_by_supervisor.items():
+            for pr in prs:
+                route = pr.get("trip_reference") or "Unknown Route"
+                plate = pr.get("vehicle_plate") or "Unknown Plate"
+                driver = pr.get("requester_name") or "Unknown Driver"
+                lines = pr.get("line_items", [])
+                if lines:
+                    for line in lines:
+                        desc = line.get('item', 'Expense')
+                        payment_lines.append(f'"{sup}","{route}","{plate}","{driver}","{desc}",{line.get("amount")}')
+                else:
+                    payment_lines.append(f'"{sup}","{route}","{plate}","{driver}","General Expense",{pr.get("total_amount")}')
+    elif format_type == "table":
+        payment_lines.append(f"{'Supervisor':<20} | {'Vehicle':<12} | {'Amount':>10}")
+        payment_lines.append("-" * 48)
+        for sup, prs in prs_by_supervisor.items():
+            sup_total = sum(_as_float(pr.get("total_amount")) for pr in prs)
+            payment_lines.append(f"{sup:<20} | {'':<12} | {sup_total:>10,.2f}")
+            for pr in prs:
+                plate = pr.get("vehicle_plate") or "Unknown"
+                amount = _as_float(pr.get("total_amount"))
+                payment_lines.append(f"{'':<20} | {plate:<12} | {amount:>10,.2f}")
+            payment_lines.append("-" * 48)
+    else:
+        # Default layout
+        for sup, prs in prs_by_supervisor.items():
+            payment_lines.append(f"Supervisor: *{sup}*")
+            sup_total = 0
+            
+            # Group by route
+            prs_by_route = {}
+            for pr in prs:
+                route = pr.get("trip_reference") or "Unknown Route"
+                if route not in prs_by_route:
+                    prs_by_route[route] = []
+                prs_by_route[route].append(pr)
+                
+            for route, route_prs in prs_by_route.items():
+                payment_lines.append(f"\n_{route}_")
+                for i, pr in enumerate(route_prs, start=1):
+                    amount = _as_float(pr.get("total_amount"))
+                    sup_total += amount
+                    plate = pr.get("vehicle_plate") or "Unknown Plate"
+                    driver = pr.get("requester_name") or "Unknown Driver"
+                    
+                    payment_lines.append(f"  {i}, {plate} ({driver})")
+                    
+                    lines = pr.get("line_items", [])
+                    if lines:
+                        for line in lines:
+                            desc = line.get('description', line.get('item', 'Expense'))
+                            payment_lines.append(f"    {desc} = {_as_float(line.get('amount')):,.2f}")
+                    else:
+                        payment_lines.append(f"    General Expense = {amount:,.2f}")
+                        
+                    payment_lines.append(f"  Total: {amount:,.2f}\n")
+                
+            payment_lines.append(f"*Supervisor Total Request: {sup_total:,.2f} Birr*\n")
+            payment_lines.append("=" * 30 + "\n")
+
+    # 2. Location Text
+    loc_summary = _fallback_location_summary()
+    loc_lines = ["2. Current Location Report for all vehicles\n", "*Trailer Report*"]
+    
+    if format_type == "csv":
+        loc_lines = ["Location,VehicleCount"]
+        for loc in loc_summary.get("locations", []):
+            loc_lines.append(f'"{loc.get("location_name")}",{loc.get("vehicle_count")}')
+    elif format_type == "table":
+        loc_lines.append(f"{'Location':<30} | {'Vehicles':>8}")
+        loc_lines.append("-" * 41)
+        for loc in loc_summary.get("locations", []):
+            loc_lines.append(f"{str(loc.get('location_name'))[:30]:<30} | {loc.get('vehicle_count', 0):>8}")
+    else:
+        for loc in loc_summary.get("locations", []):
+            loc_lines.append(f"{loc.get('vehicle_count')}    {loc.get('location_name')}")
+
+    return {
+        "payment_requests_text": "\n".join(payment_lines),
+        "current_location_text": "\n".join(loc_lines),
+        "_warning": "Showing cached/demo WhatsApp summary because live Odoo DB timed out.",
+    }
+
+
 def fallback_response_for_path(path: str, query_params=None):
     period = "daily"
     report_date = None
@@ -282,6 +385,8 @@ def fallback_response_for_path(path: str, query_params=None):
         return _fallback_daily_profit(report_date)
     if path.endswith("/income-statement"):
         return _fallback_income_statement()
+    if path.endswith("/whatsapp-summary"):
+        return _fallback_whatsapp_summary()
     if "/payment-request-detail/" in path:
         request_id = path.rstrip("/").split("/")[-1]
         for payment in _fallback_payment_requests():
@@ -619,7 +724,7 @@ async def update_payment_request(
 
 
 @router.get("/finance-summary")
-async def finance_summary_report( try: 
+async def finance_summary_report(
     period: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
@@ -655,7 +760,7 @@ async def finance_summary_report( try:
             date_trunc('{date_trunc_unit}', COALESCE(t.departure_date, t.create_date))::date AS period_start,
             COUNT(DISTINCT t.id) AS trip_count,
             COALESCE(SUM(r.amount), 0) AS revenue_total,
-            COALESCE(SUM(COALESCE(e.amount, er.amount, 0)), 0) AS expense_total
+            COALESCE(SUM(COALESCE(e.amount, 0) + COALESCE(er.amount, 0)), 0) AS expense_total
         FROM trip_trip t
         LEFT JOIN revenue r ON r.trip_id = t.id
         LEFT JOIN expenses e ON e.trip_id = t.id
@@ -690,7 +795,7 @@ async def finance_summary_report( try:
 
 
 @router.get("/daily-profit")
-async def daily_profit_report( try: 
+async def daily_profit_report(
     report_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -728,7 +833,7 @@ async def daily_profit_report( try:
                 departure.name AS departure_name,
                 destination.name AS destination_name,
                 COALESCE(r.amount, 0) AS revenue_total,
-                COALESCE(e.amount, er.amount, 0) AS cost_total,
+                (COALESCE(e.amount, 0) + COALESCE(er.amount, 0)) AS cost_total,
                 COALESCE(r.customer_name, 'Customer') AS customer_name
             FROM trip_trip t
             LEFT JOIN fleet_vehicle v ON t.vehicle_id = v.id
@@ -780,7 +885,7 @@ async def daily_profit_report( try:
 
 
 @router.get("/income-statement")
-async def income_statement_report( try: db: AsyncSession = Depends(get_session)) -> dict:
+async def income_statement_report(db: AsyncSession = Depends(get_session)) -> dict:
     row = (
         await db.execute(text("""
             WITH approved_receivables AS (
@@ -817,3 +922,67 @@ async def income_statement_report( try: db: AsyncSession = Depends(get_session))
         "receivable_count": row.receivable_count or 0,
         "payment_request_count": row.payment_request_count or 0,
     }
+
+
+@router.get("/whatsapp-summary")
+async def whatsapp_summary_report(
+    format: str = Query("default", description="Format type: default, table, csv"),
+    db: AsyncSession = Depends(get_session)
+) -> dict:
+    try:
+        # Generate Payment Requests text
+        expense_rows = await db.execute(text("""
+            SELECT
+                t.id,
+                COALESCE(departure.name, 'Addis Ababa') AS origin,
+                COALESCE(destination.name, 'Djibouti') AS destination,
+                COALESCE(driver.name, 'Unassigned Driver') AS driver_name,
+                SUM(COALESCE(e.total_expense, e.amount * COALESCE(e.quantity, 1), 0)) AS total_expense
+            FROM trip_trip t
+            LEFT JOIN hr_employee driver ON t.driver_id = driver.id
+            LEFT JOIN trip_location departure ON t.departure_id = departure.id
+            LEFT JOIN trip_location destination ON t.destination_id = destination.id
+            JOIN trip_expense_line e ON e.trip_id = t.id
+            WHERE t.departure_date >= CURRENT_DATE - INTERVAL '30 days'
+            GROUP BY t.id, origin, destination, driver_name
+            HAVING SUM(COALESCE(e.total_expense, e.amount * COALESCE(e.quantity, 1), 0)) > 0
+            ORDER BY origin, destination
+        """))
+        
+        payments_by_route = {}
+        for row in expense_rows.fetchall():
+            route = f"From {row.origin} to {row.destination}"
+            if route not in payments_by_route:
+                payments_by_route[route] = []
+            payments_by_route[route].append(row)
+            
+        payment_lines = ["1. Payment Requests Summary\n"]
+        for route, trips in payments_by_route.items():
+            payment_lines.append(f"--- {route} ---")
+            for i, trip in enumerate(trips, start=1):
+                payment_lines.append(f"{i}, {trip.driver_name}")
+                payment_lines.append(f"  Total Expenses: {_as_float(trip.total_expense):,.2f} Birr\n")
+
+        # Generate Location Summary text
+        loc_rows = await db.execute(text("""
+            SELECT
+                COALESCE(current_location.name, t.current_location_note, destination.name, 'Unknown') AS location_name,
+                COUNT(*) AS vehicle_count
+            FROM trip_trip t
+            LEFT JOIN trip_location destination ON t.destination_id = destination.id
+            LEFT JOIN trip_location current_location ON t.current_location_id = current_location.id
+            WHERE COALESCE(t.state, '') NOT IN ('done', 'cancel', 'cancelled')
+            GROUP BY COALESCE(current_location.name, t.current_location_note, destination.name, 'Unknown')
+            ORDER BY vehicle_count DESC, location_name
+        """))
+        
+        loc_lines = ["2. Current Location Report for all vehicles\n", "*Trailer Report*"]
+        for row in loc_rows.fetchall():
+            loc_lines.append(f"{row.vehicle_count}    {row.location_name}")
+
+        return {
+            "payment_requests_text": "\n".join(payment_lines),
+            "current_location_text": "\n".join(loc_lines)
+        }
+    except Exception:
+        return _fallback_whatsapp_summary(format_type=format)
