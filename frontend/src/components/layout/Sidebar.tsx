@@ -22,7 +22,9 @@ export type SidebarView =
   | "payments"
   | "supervisors"
   | "locations"
-  | "graphs";
+  | "graphs"
+  | "reports"
+  | "map";
 
 interface SidebarProps {
   currentView: SidebarView;
