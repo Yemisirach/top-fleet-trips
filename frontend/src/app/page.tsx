@@ -21,7 +21,6 @@ const DashboardMap = dynamic(
   () => import("@/components/dashboard/DashboardMap"),
   { ssr: false }
 );
-
 const VIEW_META: Record<SidebarView, [string, string]> = {
   overview: ["Overview", "Fleet summary and recent activity"],
   trips: ["Journeys", "All trip records"],
@@ -29,6 +28,8 @@ const VIEW_META: Record<SidebarView, [string, string]> = {
   supervisors: ["Supervisors", "Driver and supervisor activity"],
   locations: ["Locations", "Current vehicle locations"],
   graphs: ["Analytics", "Journey pipeline and trends"],
+  map: ["Map", "Live map"],
+  reports: ["Reports", "Financial and operational reports"],
 };
 
 export default function DashboardPage() {
