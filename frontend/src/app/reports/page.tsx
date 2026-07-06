@@ -459,7 +459,7 @@ export default function ReportsPage() {
                           <td>{v.current_location_note || "–"}</td>
                           <td>{v.departure_date || "–"}</td>
                           <td><span className={`pill ${normalizeState(v.state)}`}>{stateLabel(v.state)}</span></td>
-                          <td>{v.days ?? 0}</td>
+                          <td>{v.current_location_days ?? 0}</td>
                         </tr>
                       ))}
                     </tbody>
