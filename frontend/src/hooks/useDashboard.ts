@@ -1,6 +1,7 @@
 "use client";
 import { useState, useCallback } from "react";
 import { fetchJson, API_BASE } from "@/lib/api";
+import { generateDemoTrips } from "@/lib/demo";
 import type { DashboardSnapshot, DashboardMode } from "@/types/dashboard";
 import type { Trip } from "@/types/trip";
 
@@ -15,18 +16,17 @@ export function useDashboard() {
   });
 
   const load = useCallback(async (m?: DashboardMode) => {
-    const currentMode = m ?? mode;
     setLoading(true);
+    const activeMode = m || mode;
     try {
-      const result = await fetchJson<DashboardSnapshot>(
-        `${API_BASE}/dashboard/full?mode=${encodeURIComponent(currentMode)}`
-      );
-      setData(result);
-    } catch {
-      setData({});
-    } finally {
-      setLoading(false);
+      const snap = await fetchJson<DashboardSnapshot>(`${API_BASE}/dashboard/full?mode=${activeMode}`);
+      setData(snap);
+    } catch (err) {
+      console.error("Failed to load dashboard data:", err);
+      // Fallback to local demo data if backend is unavailable
+      setData({ recent_journeys: generateDemoTrips(8) });
     }
+    setLoading(false);
   }, [mode]);
 
   const changeMode = useCallback((m: DashboardMode) => {

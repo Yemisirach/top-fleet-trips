@@ -48,6 +48,14 @@ export interface Trip {
   trips?: TripLeg[];
 }
 
+export interface PaymentRequestLine {
+  item?: string;
+  description?: string;
+  amount?: number;
+  quantity?: number;
+  total?: number;
+}
+
 // ── Payment request ──────────────────────────────────
 export interface PaymentRequest {
   id: string | number;
@@ -64,7 +72,7 @@ export interface PaymentRequest {
   total_amount?: number;
   source?: string;
   request_text?: string;
-  line_items?: { item: string; description: string; amount: number }[];
+  line_items?: PaymentRequestLine[];
 }
 
 // ── Report types ─────────────────────────────────────

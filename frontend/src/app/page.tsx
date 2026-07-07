@@ -25,7 +25,6 @@ const VIEW_META: Record<SidebarView, [string, string]> = {
   overview: ["Overview", "Fleet summary and recent activity"],
   trips: ["Journeys", "All trip records"],
   payments: ["Payments", "Revenue and expense overview"],
-  supervisors: ["Supervisors", "Driver and supervisor activity"],
   locations: ["Locations", "Current vehicle locations"],
   graphs: ["Analytics", "Journey pipeline and trends"],
   map: ["Map", "Live map"],
@@ -144,9 +143,6 @@ export default function DashboardPage() {
                 <div className="panel" style={{ flex: "1 1 65%", minWidth: 480 }}>
                   <div className="panel-header">
                     <div className="panel-title">Recent Trips</div>
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      {filteredTrips.length} of {allTrips.length} shown
-                    </span>
                   </div>
                   <div style={{ padding: "0 0 8px" }}>
                     <TripTable trips={filteredTrips} />
@@ -174,6 +170,49 @@ export default function DashboardPage() {
                   {filteredTrips.filter((t) =>
                     ["available", "assigned", "dispatched"].includes(normalizeState(t.status))
                   ).length === 0 && <div className="empty">No active journeys.</div>}
+                </div>
+              </div>
+
+              {/* Driver Activity (Supervisors) */}
+              <div className="panel">
+                <div className="panel-header"><div className="panel-title">Driver Activity</div></div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="fleet-table" id="supervisor-table-overview">
+                    <thead>
+                      <tr>
+                        {["Driver/Supervisor", "Vehicles", "Trips", "Active Scope"].map((h) => (
+                          <th key={h}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.values(
+                        filteredTrips.reduce<Record<string, { name: string; vehicles: Set<string>; trips: number; active: number }>>(
+                          (acc, t) => {
+                            const name = t.driver_name || "Unassigned driver";
+                            if (!acc[name]) acc[name] = { name, vehicles: new Set(), trips: 0, active: 0 };
+                            acc[name].vehicles.add(t.vehicle_plate || "N/A");
+                            acc[name].trips++;
+                            if (["available", "assigned", "dispatched"].includes(normalizeState(t.status))) acc[name].active++;
+                            return acc;
+                          }, {}
+                        )
+                      ).map((row) => (
+                        <tr key={row.name}>
+                          <td>{row.name}</td>
+                          <td>{Array.from(row.vehicles).join(", ")}</td>
+                          <td>{row.trips}</td>
+                          <td>
+                            {row.active > 0 ? (
+                              <span className="pill green">{row.active} Active</span>
+                            ) : (
+                              <span className="pill muted">Idle</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </>
@@ -271,45 +310,6 @@ export default function DashboardPage() {
               </div>
             </div>
           )} */}
-
-          {/* ── Supervisors ── */}
-          {view === "supervisors" && !loading && (
-            <div className="panel">
-              <div className="panel-header"><div className="panel-title">Supervisors</div></div>
-              <div style={{ overflowX: "auto" }}>
-                <table className="fleet-table" id="supervisor-table">
-                  <thead>
-                    <tr>
-                      {["Supervisor", "Vehicles", "Trips", "Active Scope"].map((h) => (
-                        <th key={h}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.values(
-                      filteredTrips.reduce<Record<string, { name: string; vehicles: Set<string>; trips: number; active: number }>>(
-                        (acc, t) => {
-                          const name = t.driver_name || "Unassigned supervisor";
-                          if (!acc[name]) acc[name] = { name, vehicles: new Set(), trips: 0, active: 0 };
-                          acc[name].vehicles.add(t.vehicle_plate || "N/A");
-                          acc[name].trips++;
-                          if (["available", "assigned", "dispatched"].includes(normalizeState(t.status))) acc[name].active++;
-                          return acc;
-                        }, {}
-                      )
-                    ).map((row) => (
-                      <tr key={row.name}>
-                        <td>{row.name}</td>
-                        <td>{Array.from(row.vehicles).join(", ")}</td>
-                        <td>{row.trips}</td>
-                        <td>{row.active}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
 
           {/* ── Locations ── */}
           {view === "locations" && !loading && (

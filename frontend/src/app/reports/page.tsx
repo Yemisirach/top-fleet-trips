@@ -60,12 +60,14 @@ export default function ReportsPage() {
   const [incomeStatement, setIncomeStatement] = useState<IncomeStatement | null>(null);
   const [whatsappSummary, setWhatsappSummary] = useState<{payment_requests_text: string, current_location_text: string, _warning?: string} | null>(null);
   const [filterText, setFilterText] = useState("");
+  const [selectedPrIds, setSelectedPrIds] = useState<string[]>([]);
+  const [editingPrId, setEditingPrId] = useState<string | null>(null);
 
   // New payment request form
-  const [newRequestText, setNewRequestText] = useState("");
+  const [newRequestTripRef, setNewRequestTripRef] = useState("");
   const [newRequestName, setNewRequestName] = useState("");
   const [newRequestVehicle, setNewRequestVehicle] = useState("");
-  const [newRequestAmount, setNewRequestAmount] = useState("");
+  const [newRequestLines, setNewRequestLines] = useState([{ item: "", description: "", amount: 0, quantity: 1 }]);
   const [newRequestSubmitting, setNewRequestSubmitting] = useState(false);
   const [newRequestError, setNewRequestError] = useState("");
   const [newRequestSuccess, setNewRequestSuccess] = useState("");
@@ -208,7 +210,20 @@ export default function ReportsPage() {
     saveAs(new Blob([buffer]), `Daily_Cost_and_Profit_Report_${dailyProfit.report_date || "latest"}.xlsx`);
   }, [dailyProfit]);
 
-  const load = useCallback(async (t: Tab = tab) => {
+  const load = useCallback(async (t: Tab = tab, force = false) => {
+    // Avoid re-fetching if data is already present and not forced
+    const hasData = (() => {
+      if (t === "current-location") return locationRows.length > 0;
+      if (t === "location-summary") return !!locationSummary;
+      if (t === "payment-requests") return paymentRequests.length > 0;
+      if (t === "finance-summary") return !!financeSummary;
+      if (t === "daily-profit") return !!dailyProfit;
+      if (t === "income-statement") return !!incomeStatement;
+      return false; // whatsapp reports always recalculate 
+    })();
+
+    if (!force && hasData && t !== "whatsapp-reports") return;
+
     setLoading(true);
     try {
       if (t === "current-location") {
@@ -233,7 +248,28 @@ export default function ReportsPage() {
         const data = await fetchJson<IncomeStatement>(`${API_BASE}/reports/income-statement`);
         setIncomeStatement(data);
       } else if (t === "whatsapp-reports") {
-        const data = await fetchJson<any>(`${API_BASE}/reports/whatsapp-summary?format=${whatsappFormat}`);
+        let prs = paymentRequests;
+        if (!prs.length || force) {
+            prs = await fetchJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`);
+            setPaymentRequests(prs);
+        }
+        
+        let idsToFetch = selectedPrIds;
+        // Auto-select today's pending if nothing is selected yet and not initialized
+        if (selectedPrIds.length === 0 && !window.sessionStorage.getItem('whatsapp-initialized')) {
+            const todayStr = new Date().toISOString().split("T")[0];
+            idsToFetch = prs
+                .filter(p => (p.date || "").startsWith(todayStr) && p.state === "draft")
+                .map(p => String(p.id));
+            if (idsToFetch.length > 0) {
+               setSelectedPrIds(idsToFetch);
+            }
+            window.sessionStorage.setItem('whatsapp-initialized', 'true');
+        }
+
+        const url = `${API_BASE}/reports/whatsapp-summary?format=${whatsappFormat}` + 
+                    (idsToFetch.length > 0 ? `&pr_ids=${idsToFetch.join(",")}` : "&pr_ids=none");
+        const data = await fetchJson<any>(url);
         setWhatsappSummary(data);
         // Also preload daily profit for the spreadsheet button
         if (!dailyProfit) {
@@ -246,7 +282,7 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, financePeriod, dailyDate, whatsappFormat]);
+  }, [tab, financePeriod, dailyDate, whatsappFormat, selectedPrIds, paymentRequests]);
 
   useEffect(() => {
     // Auth guard
@@ -260,10 +296,16 @@ export default function ReportsPage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (tab === "whatsapp-reports") {
+      load("whatsapp-reports");
+    }
+  }, [whatsappFormat, selectedPrIds]);
+
   const handleTabChange = (t: Tab) => {
     setTab(t);
     setFilterText("");
-    load(t);
+    load(t, false);
   };
 
   const handleNewRequest = async (e: React.FormEvent) => {
@@ -271,22 +313,38 @@ export default function ReportsPage() {
     setNewRequestSubmitting(true);
     setNewRequestError("");
     setNewRequestSuccess("");
+    const validLines = newRequestLines.filter(l => l.item.trim() || l.description.trim() || l.amount > 0);
     try {
-      await fetchJson(`${API_BASE}/reports/payment-request`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newRequestName,
-          vehicle_plate: newRequestVehicle,
-          total_amount: parseFloat(newRequestAmount) || 0,
-          request_text: newRequestText,
-        }),
-      } as RequestInit);
-      setNewRequestSuccess("Payment request submitted successfully.");
-      setNewRequestText("");
+      if (editingPrId) {
+        await fetchJson(`${API_BASE}/reports/payment-request/${editingPrId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: newRequestName,
+            trip_reference: newRequestTripRef,
+            vehicle_plate: newRequestVehicle,
+            line_items: validLines,
+          }),
+        } as RequestInit);
+        setNewRequestSuccess("Payment request updated successfully.");
+      } else {
+        await fetchJson(`${API_BASE}/reports/payment-request`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: newRequestName,
+            trip_reference: newRequestTripRef,
+            vehicle_plate: newRequestVehicle,
+            line_items: validLines,
+          }),
+        } as RequestInit);
+        setNewRequestSuccess("Payment request submitted successfully.");
+      }
+      setNewRequestTripRef("");
       setNewRequestName("");
       setNewRequestVehicle("");
-      setNewRequestAmount("");
+      setNewRequestLines([{ item: "", description: "", amount: 0, quantity: 1 }]);
+      setEditingPrId(null);
     } catch (err: unknown) {
       setNewRequestError(err instanceof Error ? err.message : "Submission failed");
     } finally {
@@ -314,7 +372,7 @@ export default function ReportsPage() {
         }} 
         mobileOpen={mobileSidebarOpen} 
       />
-      <div className="app-main" style={{ display: "flex", flexDirection: "column", height: "100vh", overflowY: "auto" }}>
+      <div className="app-main" style={{ display: "flex", flexDirection: "column", height: "100vh", overflowY: "hidden" }}>
         
         {/* Topbar */}
         <header className="fleet-topbar" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -326,7 +384,7 @@ export default function ReportsPage() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn" onClick={() => load()}><RefreshCw size={16} /> Refresh</button>
+          <button className="btn" onClick={() => load(tab, true)}><RefreshCw size={16} /> Refresh</button>
           <button className="btn" id="theme-toggle" onClick={toggle}>
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
             {theme === "dark" ? "Light" : "Dark"}
@@ -393,7 +451,7 @@ export default function ReportsPage() {
       )}
 
       {/* Content */}
-      <div className="fleet-page">
+      <div className="fleet-page" style={{ flex: 1, overflowY: "auto", paddingBottom: 40 }}>
 
         {/* ── Current Location ── */}
         {tab === "current-location" && (
@@ -499,13 +557,13 @@ export default function ReportsPage() {
             <div style={{ overflowX: "auto" }}>
               <table className="fleet-table" id="payment-requests-table">
                 <thead>
-                  <tr>{["ID", "Name", "Vehicle", "Trip", "Date", "Approved", "State", "Requester", "Supervisor", "Total"].map((h) => <th key={h}>{h}</th>)}</tr>
+                  <tr>{["ID", "Name", "Vehicle", "Trip", "Date", "Approved", "State", "Requester", "Supervisor", "Total", "Action"].map((h) => <th key={h}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {(filterRows(paymentRequests as unknown as Record<string, unknown>[]) as unknown as PaymentRequest[])
                     .filter(pr => paymentFilterState === "all" || (pr.state || "draft").toLowerCase() === paymentFilterState.toLowerCase())
                     .length === 0 ? (
-                    <tr><td colSpan={10} className="empty">No payment requests found.</td></tr>
+                    <tr><td colSpan={11} className="empty">No payment requests found.</td></tr>
                   ) : (
                     (filterRows(paymentRequests as unknown as Record<string, unknown>[]) as unknown as PaymentRequest[])
                       .filter(pr => paymentFilterState === "all" || (pr.state || "draft").toLowerCase() === paymentFilterState.toLowerCase())
@@ -521,6 +579,20 @@ export default function ReportsPage() {
                         <td>{pr.requester_name || "–"}</td>
                         <td>{pr.supervisor_name || "–"}</td>
                         <td className="green">{money(pr.total_amount)}</td>
+                        <td>
+                          <button className="fleet-btn fleet-btn-secondary" style={{ padding: "4px 8px", fontSize: 12 }} onClick={() => {
+                            setEditingPrId(String(pr.id));
+                            setNewRequestName(pr.name || "");
+                            setNewRequestVehicle(pr.vehicle_plate || "");
+                            setNewRequestTripRef(pr.trip_reference || "");
+                            if (pr.line_items && pr.line_items.length > 0) {
+                              setNewRequestLines(pr.line_items);
+                            } else {
+                              setNewRequestLines([{ item: "General", description: pr.request_text || "", amount: pr.total_amount || 0, quantity: 1 }]);
+                            }
+                            setTab("new-request");
+                          }}>Edit</button>
+                        </td>
                       </tr>
                     ))
                   )}
@@ -679,6 +751,27 @@ export default function ReportsPage() {
                   </button>
                 </div>
               </div>
+              <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--background-soft)" }}>
+                <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>Include Requests ({selectedPrIds.length} selected):</div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", maxHeight: 150, overflowY: "auto" }}>
+                  {paymentRequests.filter(pr => (pr.total_amount || 0) > 0 && pr.state === "draft").map(pr => (
+                    <label key={pr.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, background: "var(--card)", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border)", cursor: "pointer" }}>
+                      <input 
+                        type="checkbox" 
+                        checked={selectedPrIds.includes(String(pr.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedPrIds([...selectedPrIds, String(pr.id)]);
+                          } else {
+                            setSelectedPrIds(selectedPrIds.filter(id => id !== String(pr.id)));
+                          }
+                        }}
+                      />
+                      {pr.vehicle_plate} ({pr.date?.split("T")[0]})
+                    </label>
+                  ))}
+                </div>
+              </div>
               <div className="panel-body" style={{ backgroundColor: theme === "dark" ? "#0b141a" : "#efeae2", padding: "32px 24px", borderRadius: "0 0 8px 8px" }}>
                 <div style={{ 
                   backgroundColor: theme === "dark" ? "#056162" : "#dcf8c6", 
@@ -763,7 +856,7 @@ export default function ReportsPage() {
         {tab === "new-request" && (
           <div style={{ maxWidth: 560 }}>
             <div className="panel">
-              <div className="panel-header"><div className="panel-title">New Payment Request</div></div>
+              <div className="panel-header"><div className="panel-title">{editingPrId ? `Edit Payment Request #${editingPrId}` : "New Payment Request"}</div></div>
               <div className="panel-body">
                 {newRequestError && <div className="login-error" style={{ marginBottom: 16 }}>{newRequestError}</div>}
                 {newRequestSuccess && <div style={{ background: "var(--secondary-soft)", border: "1px solid rgba(14,152,73,.3)", color: "var(--secondary)", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>{newRequestSuccess}</div>}
@@ -777,25 +870,67 @@ export default function ReportsPage() {
                     <input id="req-vehicle" className="fleet-input" value={newRequestVehicle} onChange={(e) => setNewRequestVehicle(e.target.value)} placeholder="e.g. AA-12345" />
                   </div>
                   <div>
-                    <label className="login-label" htmlFor="req-amount">Total Amount (ETB)</label>
-                    <input id="req-amount" className="fleet-input" type="number" min="0" step="1" value={newRequestAmount} onChange={(e) => setNewRequestAmount(e.target.value)} placeholder="0" />
+                    <label className="login-label" htmlFor="req-trip-ref">Trip Reference (Source Doc) *</label>
+                    <input id="req-trip-ref" className="fleet-input" required value={newRequestTripRef} onChange={(e) => setNewRequestTripRef(e.target.value)} placeholder="e.g. Dire Dawa Trip" />
                   </div>
                   <div>
-                    <label className="login-label" htmlFor="req-text">Request Details *</label>
-                    <textarea
-                      id="req-text"
-                      className="fleet-input"
-                      rows={5}
-                      required
-                      value={newRequestText}
-                      onChange={(e) => setNewRequestText(e.target.value)}
-                      placeholder="Describe the payment request with amounts…"
-                      style={{ resize: "vertical" }}
-                    />
+                    <label className="login-label">Expense Lines</label>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "var(--background-soft)", padding: 12, borderRadius: 8, border: "1px solid var(--border)" }}>
+                      {newRequestLines.map((line, idx) => (
+                        <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 80px 80px auto", gap: 8, alignItems: "center" }}>
+                          <input className="fleet-input" placeholder="Item (e.g. Fuel)" value={line.item} onChange={(e) => {
+                            const newLines = [...newRequestLines];
+                            newLines[idx].item = e.target.value;
+                            setNewRequestLines(newLines);
+                          }} />
+                          <input className="fleet-input" placeholder="Description" value={line.description} onChange={(e) => {
+                            const newLines = [...newRequestLines];
+                            newLines[idx].description = e.target.value;
+                            setNewRequestLines(newLines);
+                          }} />
+                          <input className="fleet-input" type="number" placeholder="Qty" min="1" value={line.quantity || 1} onChange={(e) => {
+                            const newLines = [...newRequestLines];
+                            newLines[idx].quantity = parseFloat(e.target.value) || 0;
+                            setNewRequestLines(newLines);
+                          }} />
+                          <input className="fleet-input" type="number" placeholder="Amount" value={line.amount || 0} onChange={(e) => {
+                            const newLines = [...newRequestLines];
+                            newLines[idx].amount = parseFloat(e.target.value) || 0;
+                            setNewRequestLines(newLines);
+                          }} />
+                          <div style={{ fontSize: 13, fontWeight: 500, textAlign: "right", color: "var(--text)" }}>
+                            {((line.amount || 0) * (line.quantity || 1)).toLocaleString()}
+                          </div>
+                          {newRequestLines.length > 1 && (
+                            <button type="button" onClick={() => setNewRequestLines(newRequestLines.filter((_, i) => i !== idx))} style={{ color: "var(--red)", background: "none", border: "none", cursor: "pointer", padding: 4 }}>×</button>
+                          )}
+                        </div>
+                      ))}
+                      <button type="button" onClick={() => setNewRequestLines([...newRequestLines, { item: "", description: "", amount: 0, quantity: 1 }])} style={{ background: "none", border: "1px dashed var(--border)", color: "var(--text-dim)", padding: "8px", borderRadius: 6, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        <Plus size={14} /> Add Line Item
+                      </button>
+                    </div>
                   </div>
-                  <button type="submit" className="btn primary" disabled={newRequestSubmitting} id="submit-request">
-                    {newRequestSubmitting ? "Submitting…" : <><Plus size={16} /> Submit Request</>}
-                  </button>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontWeight: "bold", fontSize: 16 }}>
+                      Total: {newRequestLines.reduce((acc, l) => acc + ((l.amount || 0) * (l.quantity || 1)), 0).toLocaleString()} Birr
+                    </div>
+                    <div style={{ display: "flex", gap: 12 }}>
+                      {editingPrId && (
+                        <button type="button" className="fleet-btn fleet-btn-secondary" onClick={() => {
+                          setEditingPrId(null);
+                          setNewRequestTripRef("");
+                          setNewRequestName("");
+                          setNewRequestVehicle("");
+                          setNewRequestLines([{ item: "", description: "", amount: 0, quantity: 1 }]);
+                          setTab("payment-requests");
+                        }}>Cancel</button>
+                      )}
+                      <button type="submit" className="fleet-btn fleet-btn-primary" disabled={newRequestSubmitting}>
+                        {newRequestSubmitting ? (editingPrId ? "Updating..." : "Submitting...") : (editingPrId ? "Save Changes" : "Submit Request")}
+                      </button>
+                    </div>
+                  </div>
                 </form>
               </div>
             </div>

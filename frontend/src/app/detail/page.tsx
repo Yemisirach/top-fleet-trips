@@ -1,5 +1,8 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+
+export const dynamic = 'force-dynamic';
+
+import { useEffect, useState, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { LayoutDashboard, Map, Moon, Sun } from "lucide-react";
@@ -58,7 +61,7 @@ function buildTimeline(trip: Trip): TimelineEntry[] {
   return entries;
 }
 
-export default function DetailPage() {
+function DetailContent() {
   const { theme, toggle } = useTheme();
   const params = useSearchParams();
   const tripId = params.get("journey_id") || params.get("trip_id");
@@ -67,7 +70,9 @@ export default function DetailPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!tripId) { setError("No trip id provided."); return; }
+    if (!tripId) { 
+      return; 
+    }
     (async () => {
       const mode = localStorage.getItem("fleetDashboardMode") || "live";
       let found: Trip | null = null;
@@ -102,6 +107,10 @@ export default function DetailPage() {
         {error}
       </div>
     );
+  }
+
+  if (!tripId) {
+    return <div className="empty" style={{ padding: 60 }}>No journey selected.</div>;
   }
 
   if (!trip) {
@@ -251,7 +260,7 @@ export default function DetailPage() {
                     <div className="compare-row" key={i}>
                       <div className="compare-label">Trip {leg.id || i + 1}</div>
                       <div>
-                        {leg.origin || "Origin"} → {leg.destination || "Destination"} · Revenue {money(leg.revenue || 0)} · Expense {money(leg.expense || 0)}
+                        {leg.origin || "Origin"} → {leg.destination || "Destination"} · Revenue {money(leg.revenue || 0)} · Expense {money(leg.expense || 0)} · <span className={Number(leg.revenue || 0) - Number(leg.expense || 0) >= 0 ? "green" : "red"}>Profit {money(Number(leg.revenue || 0) - Number(leg.expense || 0))}</span>
                       </div>
                     </div>
                   ))
@@ -269,5 +278,13 @@ export default function DetailPage() {
         </div>
       </main>
     </>
+  );
+}
+
+export default function DetailPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center">Loading trip details...</div>}>
+      <DetailContent />
+    </Suspense>
   );
 }

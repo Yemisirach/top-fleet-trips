@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
@@ -25,11 +25,11 @@ interface GpsInfo {
   ignition?: string;
 }
 
-export default function MapPage() {
+export function MapContent() {
   const { theme, toggle } = useTheme();
-  const params = useSearchParams();
-  const tripId = params.get("journey_id") || params.get("trip_id");
-  const vehicleParam = params.get("vehicle") || params.get("plate") || params.get("search");
+  const searchParams = useSearchParams();
+  const tripId = searchParams.get("journey_id");
+  const vehicleParam = searchParams.get("plate");
 
   const [vehicleSearch, setVehicleSearch] = useState(vehicleParam || "");
   const [trip, setTrip] = useState<Trip | null>(null);
@@ -73,20 +73,24 @@ export default function MapPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Fetch GPS data when vehicle changes
   const fetchGps = useCallback((plate: string) => {
     if (!plate) return;
-    setGpsLoading(true);
-    fetchJson<GpsPayload>(`${API_BASE}/dashboard/gps/${encodeURIComponent(plate)}`)
-      .then(d => {
-        if (d.gps) {
-          setGpsData(d.gps as GpsInfo);
-        } else {
-          setGpsData(null);
-        }
-      })
-      .catch(() => setGpsData(null))
-      .finally(() => setGpsLoading(false));
+    const mode = localStorage.getItem("fleetDashboardMode") || "live";
+    
+    // Defer execution to avoid React cascading render warning
+    Promise.resolve().then(() => {
+      setGpsLoading(true);
+      fetchJson<GpsPayload>(`${API_BASE}/dashboard/gps/${encodeURIComponent(plate)}?mode=${mode}`)
+        .then(d => {
+          if (d.gps) {
+            setGpsData(d.gps as GpsInfo);
+          } else {
+            setGpsData(null);
+          }
+        })
+        .catch(() => setGpsData(null))
+        .finally(() => setGpsLoading(false));
+    });
   }, []);
 
   useEffect(() => {
@@ -133,11 +137,18 @@ export default function MapPage() {
         : trip.destination || "Destination pending")
     : null;
 
+  const [now, setNow] = useState(() => Date.now());
+  
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(interval);
+  }, []);
+
   const timeAgo = (dateStr?: string) => {
     if (!dateStr) return "Unknown";
     try {
       const d = new Date(dateStr);
-      const diff = Date.now() - d.getTime();
+      const diff = now - d.getTime();
       if (diff < 60_000) return "Just now";
       if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
       if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
@@ -505,5 +516,13 @@ export default function MapPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function MapPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center">Loading map...</div>}>
+      <MapContent />
+    </Suspense>
   );
 }

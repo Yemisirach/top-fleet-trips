@@ -67,7 +67,7 @@ export default function FinancialSummary({ data, trips }: FinancialSummaryProps)
       </div>
 
       {/* Driver activity */}
-      <div className="panel">
+      {/* <div className="panel">
         <div className="panel-header"><div className="panel-title">Driver Activity</div></div>
         <div className="panel-body" style={{ padding: 0 }}>
           <div style={{ overflowX: "auto" }}>
@@ -93,7 +93,7 @@ export default function FinancialSummary({ data, trips }: FinancialSummaryProps)
             </table>
           </div>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 }

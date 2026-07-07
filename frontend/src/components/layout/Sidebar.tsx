@@ -20,7 +20,6 @@ export type SidebarView =
   | "overview"
   | "trips"
   | "payments"
-  | "supervisors"
   | "locations"
   | "graphs"
   | "reports"
@@ -40,8 +39,8 @@ const NAV_ITEMS: {
   external?: string;
 }[] = [
   { view: "overview", label: "Overview", icon: <LayoutDashboard size={18} /> },
+  { view: "trips", status: "active", label: "Active Journeys", icon: <Truck size={18} /> },
   { view: "trips", label: "All Journeys", icon: <Truck size={18} /> },
-  { view: "supervisors", label: "Supervisors", icon: <Users size={18} /> },
   { view: "graphs", label: "Analytics", icon: <BarChart2 size={18} /> },
   { view: "map", label: "Mayet Map", icon: <Map size={18} /> },
 ];

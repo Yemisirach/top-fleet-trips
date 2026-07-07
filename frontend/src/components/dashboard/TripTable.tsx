@@ -21,7 +21,7 @@ export default function TripTable({ trips }: TripTableProps) {
       <table className="fleet-table" id="recent-trip-table">
         <thead>
           <tr>
-            {["Vehicle", "Customer", "Driver", "Route", "Mayet", "Payment", "Orders", "State"].map((h) => (
+            {["Vehicle", "Customer", "Driver", "Route", "Mayet", "Payment", "Revenue", "Expense", "Profit", "Orders", "State"].map((h) => (
               <th key={h}>{h}</th>
             ))}
           </tr>
@@ -44,6 +44,11 @@ export default function TripTable({ trips }: TripTableProps) {
                 <td>{destinations || t.origin || "Pending"}</td>
                 <td>{t.mayet_status || "No cache"}</td>
                 <td>{paymentLabel(t)}</td>
+                <td className="green">{money(t.total_revenue)}</td>
+                <td className="red">{money(t.total_expense)}</td>
+                <td className={Number(t.total_revenue || 0) - Number(t.total_expense || 0) >= 0 ? "green" : "red"}>
+                  {money(Number(t.total_revenue || 0) - Number(t.total_expense || 0))}
+                </td>
                 <td>{getOrderCount(t)}</td>
                 <td>{stateLabel(t.status)}</td>
               </tr>

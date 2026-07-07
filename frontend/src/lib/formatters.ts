@@ -61,7 +61,7 @@ export const getOrderCount = (trip: Trip): number => {
   return Number(
     trip.order_count ||
       trip.order_receivable_count ||
-      trip.payment_request_count ||
+      trip.payment_request_total ||
       legCount ||
       1
   );
