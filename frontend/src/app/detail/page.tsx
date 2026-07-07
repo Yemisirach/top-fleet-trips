@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { LayoutDashboard, Map, Moon, Sun } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import { fetchJson, API_BASE } from "@/lib/api";
-import { money, normalizeState, stateLabel, getPaymentState, paymentLabel } from "@/lib/formatters";
+import { money, normalizeState, stateLabel, getPaymentState, paymentLabel, firstPlateNumber } from "@/lib/formatters";
 import type { Trip, GpsPayload } from "@/types/trip";
 
 interface TimelineEntry {
@@ -164,8 +164,9 @@ export default function DetailPage() {
             id="map-link"
             onClick={() => {
               const plate = trip.vehicle_plate || trip.vehicle_id || String(trip.id);
-              if (plate) navigator.clipboard.writeText(plate);
-              window.open(`https://mayetgps.com/objects?search=${encodeURIComponent(plate || '')}`, "mayet_gps");
+              const searchStr = firstPlateNumber(plate);
+              if (searchStr) navigator.clipboard.writeText(searchStr);
+              window.open(`https://mayetgps.com/objects?search=${encodeURIComponent(searchStr)}`, "mayet_gps");
             }}
           >
             <Map size={16} /> Track on Mayet

@@ -9,6 +9,7 @@ import {
   getPaymentState,
   paymentLabel,
   getOrderCount,
+  firstPlateNumber,
 } from "@/lib/formatters";
 import { fetchJson, API_BASE } from "@/lib/api";
 import type { Trip, TripLeg } from "@/types/trip";
@@ -239,8 +240,9 @@ export default function TripCard({ trip, targetId }: TripCardProps) {
           type="button"
           onClick={() => {
             const plate = trip.vehicle_plate || trip.vehicle_id || tripId;
-            if (plate) navigator.clipboard.writeText(plate);
-            window.open(`https://mayetgps.com/objects?search=${encodeURIComponent(plate || '')}`, "mayet_gps");
+            const searchStr = firstPlateNumber(plate);
+            if (searchStr) navigator.clipboard.writeText(searchStr);
+            window.open(`https://mayetgps.com/objects?search=${encodeURIComponent(searchStr)}`, "mayet_gps");
           }}
         >
           <Map size={16} /> Map

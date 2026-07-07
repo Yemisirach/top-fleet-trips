@@ -99,7 +99,7 @@ export const getDailySeries = (
 
 // ── First plate number (for Mayet search) ─────────────
 export const firstPlateNumber = (value?: string): string => {
-  const m = String(value || "").match(/\d+/);
+  const m = String(value || "").match(/\d{4,}/);
   return m ? m[0].replace(/^0+/, "") || m[0] : String(value || "");
 };
 

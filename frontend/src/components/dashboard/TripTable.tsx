@@ -27,7 +27,7 @@ export default function TripTable({ trips }: TripTableProps) {
           </tr>
         </thead>
         <tbody>
-          {trips.slice(0, 8).map((t) => {
+          {trips.slice(0, 10).map((t) => {
             const destinations = Array.isArray(t.destinations)
               ? t.destinations.join(", ")
               : "Pending";

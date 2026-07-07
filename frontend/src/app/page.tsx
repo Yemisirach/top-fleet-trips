@@ -140,8 +140,8 @@ export default function DashboardPage() {
               <AnalyticsStrip data={data} trips={filteredTrips} onOpenView={handleOpenView} />
 
               {/* Recent trip table + financial summary */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))", gap: 16 }}>
-                <div className="panel">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+                <div className="panel" style={{ flex: "1 1 65%", minWidth: 480 }}>
                   <div className="panel-header">
                     <div className="panel-title">Recent Trips</div>
                     <span className="muted" style={{ fontSize: 12 }}>
@@ -152,7 +152,9 @@ export default function DashboardPage() {
                     <TripTable trips={filteredTrips} />
                   </div>
                 </div>
-                <FinancialSummary data={data} trips={filteredTrips} />
+                <div style={{ flex: "1 1 30%", minWidth: 320 }}>
+                  <FinancialSummary data={data} trips={filteredTrips} />
+                </div>
               </div>
 
               {/* Active trips mini-cards */}
