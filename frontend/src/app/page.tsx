@@ -140,13 +140,10 @@ export default function DashboardPage() {
               <AnalyticsStrip data={data} trips={filteredTrips} onOpenView={handleOpenView} />
 
               {/* Recent trip table + financial summary */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))", gap: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr", gap: 16 }}>
                 <div className="panel">
                   <div className="panel-header">
                     <div className="panel-title">Recent Trips</div>
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      {filteredTrips.length} of {allTrips.length} shown
-                    </span>
                   </div>
                   <div style={{ padding: "0 0 8px" }}>
                     <TripTable trips={filteredTrips} />

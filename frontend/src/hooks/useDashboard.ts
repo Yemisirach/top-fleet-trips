@@ -1,6 +1,7 @@
 "use client";
 import { useState, useCallback } from "react";
 import { fetchJson, API_BASE } from "@/lib/api";
+import { generateDemoTrips } from "@/lib/demo";
 import type { DashboardSnapshot, DashboardMode } from "@/types/dashboard";
 import type { Trip } from "@/types/trip";
 
@@ -15,19 +16,12 @@ export function useDashboard() {
   });
 
   const load = useCallback(async (m?: DashboardMode) => {
-    const currentMode = m ?? mode;
     setLoading(true);
-    try {
-      const result = await fetchJson<DashboardSnapshot>(
-        `${API_BASE}/dashboard/full?mode=${encodeURIComponent(currentMode)}`
-      );
-      setData(result);
-    } catch {
-      setData({});
-    } finally {
-      setLoading(false);
-    }
-  }, [mode]);
+    // Always use demo data (Odoo-style with payment requests + TOP Factory)
+    const demoTrips = generateDemoTrips(8);
+    setData({ recent_journeys: demoTrips });
+    setLoading(false);
+  }, []);
 
   const changeMode = useCallback((m: DashboardMode) => {
     localStorage.setItem("fleetDashboardMode", m);

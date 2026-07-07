@@ -2,7 +2,7 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { resolveCityCoords, CITY_COORDS } from "@/lib/cityCoords";
-import { paymentLabel, stateLabel } from "@/lib/formatters";
+import { paymentLabel, stateLabel, firstPlateNumber } from "@/lib/formatters";
 import type { Trip } from "@/types/trip";
 
 interface DashboardMapProps {
@@ -104,8 +104,12 @@ export default function DashboardMap({ trips }: DashboardMapProps) {
               style={{ cursor: "pointer", textAlign: "left" }}
               onClick={() => {
                 const plate = t.vehicle_plate || t.vehicle_id || String(t.id);
-                if (plate) navigator.clipboard.writeText(plate);
-                window.open(`https://mayetgps.com/objects?search=${encodeURIComponent(plate || '')}`, "mayet_gps");
+                const searchNum = firstPlateNumber(plate);
+                if (searchNum) {
+                  navigator.clipboard.writeText(searchNum);
+                  // Open Mayet with first plate number (like your screenshot)
+                  window.open(`https://mayetgps.com/objects?search=${encodeURIComponent(searchNum)}`, "mayet_gps");
+                }
               }}
             >
               <div className="map-side-label">

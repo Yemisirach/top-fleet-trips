@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { LayoutDashboard, Moon, Sun, Copy, ExternalLink, MapPin, Truck, User, Navigation, CheckCircle, Search } from "lucide-react";
@@ -10,7 +10,7 @@ import type { Trip } from "@/types/trip";
 
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 
-export default function MapPage() {
+function MapContent() {
   const { theme, toggle } = useTheme();
   const params = useSearchParams();
   const tripId = params.get("journey_id") || params.get("trip_id");
@@ -398,5 +398,13 @@ export default function MapPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function MapPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center">Loading map...</div>}>
+      <MapContent />
+    </Suspense>
   );
 }

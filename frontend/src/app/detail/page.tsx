@@ -1,5 +1,8 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+
+export const dynamic = 'force-dynamic';
+
+import { useEffect, useState, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { LayoutDashboard, Map, Moon, Sun } from "lucide-react";
@@ -58,7 +61,7 @@ function buildTimeline(trip: Trip): TimelineEntry[] {
   return entries;
 }
 
-export default function DetailPage() {
+function DetailContent() {
   const { theme, toggle } = useTheme();
   const params = useSearchParams();
   const tripId = params.get("journey_id") || params.get("trip_id");
@@ -268,5 +271,13 @@ export default function DetailPage() {
         </div>
       </main>
     </>
+  );
+}
+
+export default function DetailPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center">Loading trip details...</div>}>
+      <DetailContent />
+    </Suspense>
   );
 }
