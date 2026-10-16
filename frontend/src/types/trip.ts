@@ -150,6 +150,7 @@ export interface FinancePeriod {
   revenue_total: number;
   expense_total: number;
   profit: number;
+  pending_cost?: number;
 }
 
 export interface FinanceSummary {
@@ -161,6 +162,7 @@ export interface FinanceSummary {
     revenue_total: number;
     expense_total: number;
     profit: number;
+    pending_cost?: number;
   };
   _warning?: string;
 }
@@ -174,6 +176,8 @@ export interface DailyProfitRow {
   actual_daily_total_revenue: number;
   actual_net_profit: number;
   daily_net_profit: number;
+  receivable_posted?: boolean;
+  profit_note?: string;
   remarks: string;
   trip_id?: string | number;
   report_date?: string;
@@ -189,6 +193,8 @@ export interface DailyProfit {
     revenue_total: number;
     net_profit_total: number;
     daily_net_profit_total: number;
+    pending_trip_count?: number;
+    pending_cost_total?: number;
   };
   _warning?: string;
 }

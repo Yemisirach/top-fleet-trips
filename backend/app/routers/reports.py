@@ -201,13 +201,18 @@ def _period_key(value: Optional[str], period: str) -> str:
 
 
 def _daily_profit_totals(rows: list[dict]) -> dict:
+    posted = [row for row in rows if row.get("receivable_posted")]
+    pending = [row for row in rows if not row.get("receivable_posted")]
+    posted_profit = sum(row["actual_net_profit"] for row in posted)
     return {
         "vehicle_count": len(rows),
-        "rent_total": sum(row["rent_amount"] for row in rows),
+        "rent_total": sum(row["actual_daily_total_revenue"] for row in posted),
         "cost_total": sum(row["daily_total_cost"] for row in rows),
-        "revenue_total": sum(row["actual_daily_total_revenue"] for row in rows),
-        "net_profit_total": sum(row["actual_net_profit"] for row in rows),
-        "daily_net_profit_total": sum(row["daily_net_profit"] for row in rows),
+        "revenue_total": sum(row["actual_daily_total_revenue"] for row in posted),
+        "net_profit_total": posted_profit,
+        "daily_net_profit_total": posted_profit,
+        "pending_trip_count": len(pending),
+        "pending_cost_total": sum(row["daily_total_cost"] for row in pending),
     }
 
 
@@ -763,7 +768,7 @@ async def finance_summary_report(
     to_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
-    cache_key = f"fleet:reports:finance-summary:v3:{period}:{group_by}:{from_date or ''}:{to_date or ''}"
+    cache_key = f"fleet:reports:finance-summary:v4:{period}:{group_by}:{from_date or ''}:{to_date or ''}"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -803,8 +808,10 @@ async def finance_summary_report(
             date_trunc('{date_trunc_unit}', COALESCE(t.departure_date, t.create_date))::date AS period_start,
             {group_sql} AS group_label,
             COUNT(DISTINCT t.id) AS trip_count,
-            COALESCE(SUM(r.amount), 0) AS revenue_total,
-            COALESCE(SUM(COALESCE(e.amount, 0) + COALESCE(er.amount, 0)), 0) AS expense_total
+            COALESCE(SUM(CASE WHEN COALESCE(r.amount, 0) > 0 THEN r.amount ELSE 0 END), 0) AS revenue_total,
+            COALESCE(SUM(COALESCE(NULLIF(e.amount, 0), er.amount, 0)), 0) AS expense_total,
+            COALESCE(SUM(CASE WHEN COALESCE(r.amount, 0) > 0 THEN COALESCE(r.amount, 0) - COALESCE(NULLIF(e.amount, 0), er.amount, 0) ELSE 0 END), 0) AS posted_profit,
+            COALESCE(SUM(CASE WHEN COALESCE(r.amount, 0) = 0 THEN COALESCE(NULLIF(e.amount, 0), er.amount, 0) ELSE 0 END), 0) AS pending_cost
         FROM trip_trip t
         LEFT JOIN revenue r ON r.trip_id = t.id
         LEFT JOIN expenses e ON e.trip_id = t.id
@@ -822,7 +829,7 @@ async def finance_summary_report(
         WHERE (CAST(:from_date AS date) IS NULL OR COALESCE(t.departure_date, t.create_date)::date >= CAST(:from_date AS date))
           AND (CAST(:to_date AS date) IS NULL OR COALESCE(t.departure_date, t.create_date)::date <= CAST(:to_date AS date))
           AND COALESCE(t.departure_date, t.create_date) IS NOT NULL
-          AND (COALESCE(r.amount, 0) <> 0 OR (COALESCE(e.amount, 0) + COALESCE(er.amount, 0)) <> 0)
+          AND (COALESCE(r.amount, 0) <> 0 OR COALESCE(NULLIF(e.amount, 0), er.amount, 0) <> 0)
         GROUP BY 1, 2
         ORDER BY period_start DESC, group_label
         LIMIT 120
@@ -838,7 +845,8 @@ async def finance_summary_report(
             "trip_count": row.trip_count or 0,
             "revenue_total": revenue,
             "expense_total": expense,
-            "profit": revenue - expense,
+            "profit": _as_float(row.posted_profit),
+            "pending_cost": _as_float(row.pending_cost),
         })
     response = {
         "period": period,
@@ -849,6 +857,7 @@ async def finance_summary_report(
             "revenue_total": sum(row["revenue_total"] for row in periods),
             "expense_total": sum(row["expense_total"] for row in periods),
             "profit": sum(row["profit"] for row in periods),
+            "pending_cost": sum(row["pending_cost"] for row in periods),
         },
     }
     cache_set(cache_key, response)
@@ -860,7 +869,7 @@ async def daily_profit_report(
     report_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
-    cache_key = f"fleet:reports:daily-profit:v3:{report_date or 'latest'}"
+    cache_key = f"fleet:reports:daily-profit:v4:{report_date or 'latest'}"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -899,7 +908,7 @@ async def daily_profit_report(
                 departure.name AS departure_name,
                 destination.name AS destination_name,
                 COALESCE(r.amount, 0) AS revenue_total,
-                (COALESCE(e.amount, 0) + COALESCE(er.amount, 0)) AS cost_total,
+                COALESCE(NULLIF(e.amount, 0), er.amount, 0) AS cost_total,
                 r.customer_name AS customer_name
             FROM trip_trip t
             LEFT JOIN fleet_vehicle v ON t.vehicle_id = v.id
@@ -910,7 +919,7 @@ async def daily_profit_report(
             LEFT JOIN expenses e ON e.trip_id = t.id
             LEFT JOIN expense_requests er ON er.trip_id = t.id
             WHERE COALESCE(t.departure_date, t.create_date) IS NOT NULL
-              AND (COALESCE(r.amount, 0) <> 0 OR (COALESCE(e.amount, 0) + COALESCE(er.amount, 0)) <> 0)
+              AND (COALESCE(r.amount, 0) <> 0 OR COALESCE(NULLIF(e.amount, 0), er.amount, 0) <> 0)
         ),
         target AS (
             SELECT COALESCE(
@@ -932,18 +941,21 @@ async def daily_profit_report(
     for row in rows_result.fetchall():
         revenue = _as_float(row.revenue_total)
         cost = _as_float(row.cost_total)
-        profit = revenue - cost
+        receivable_posted = revenue > 0
+        profit = revenue - cost if receivable_posted else 0
         route_parts = [part for part in (row.departure_name, row.destination_name) if part]
         route = "-".join(route_parts) if route_parts else ""
         rows.append({
             "no": row.no,
             "driver_name": row.driver_name or "Unassigned",
             "plate_number": row.plate_number or "N/A",
-            "rent_amount": revenue,
+            "rent_amount": revenue if receivable_posted else 0,
             "daily_total_cost": cost,
-            "actual_daily_total_revenue": revenue,
+            "actual_daily_total_revenue": revenue if receivable_posted else 0,
             "actual_net_profit": profit,
             "daily_net_profit": profit,
+            "receivable_posted": receivable_posted,
+            "profit_note": "" if receivable_posted else "Receivable not posted",
             "remarks": route,
             "trip_id": row.trip_id,
             "report_date": str(row.trip_day) if row.trip_day else None,

@@ -459,7 +459,7 @@ export default function ReportsPage() {
     const sheet = workbook.addWorksheet('Daily Profit');
 
     // Add Title
-    sheet.mergeCells('A1:I1');
+    sheet.mergeCells('A1:G1');
     const titleCell = sheet.getCell('A1');
     titleCell.value = 'Daily Cost and Profit Report';
     titleCell.font = { name: 'Times New Roman', size: 14, italic: true, bold: true };
@@ -473,7 +473,7 @@ export default function ReportsPage() {
     dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
     // Header Row
-    const headers = ["No", "Driver name", "Plate number", "Rent amount", "Daily Total cost", "Actual daily Total revenue", "Actual net profit", "Daily Net profit", "REMARK"];
+    const headers = ["No", "Driver name", "Plate number", "Route", "Revenue", "Cost", "Result"];
     const headerRow = sheet.addRow(headers);
     headerRow.eachCell((cell) => {
       cell.font = { name: 'Times New Roman', size: 11, italic: true, bold: true };
@@ -485,15 +485,19 @@ export default function ReportsPage() {
     // Data Rows
     dailyProfit.rows.forEach((r: DailyProfitRow) => {
       const row = sheet.addRow([
-        r.no, r.driver_name, r.plate_number, r.rent_amount || '', r.daily_total_cost || '',
-        r.actual_daily_total_revenue || '', r.actual_net_profit, r.daily_net_profit, r.remarks || ''
+        r.no,
+        r.driver_name,
+        r.plate_number,
+        r.remarks || '',
+        r.receivable_posted ? r.actual_daily_total_revenue : '',
+        r.daily_total_cost || '',
+        r.receivable_posted ? r.actual_net_profit : 'Receivable not posted',
       ]);
       row.eachCell((cell, colNumber) => {
         cell.font = { name: 'Times New Roman', size: 11 };
         cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
         
-        // Align amounts to right, others to center/left
-        if (colNumber >= 4 && colNumber <= 8) {
+        if (colNumber >= 5 && colNumber <= 7 && r.receivable_posted) {
           cell.alignment = { horizontal: 'right', vertical: 'middle' };
           cell.numFmt = '#,##0.00';
         } else if (colNumber === 1 || colNumber === 3) {
@@ -506,17 +510,13 @@ export default function ReportsPage() {
 
     // Totals Row
     const totalProfit = dailyProfit.totals.net_profit_total;
-    const totalsRow = sheet.addRow(['', '', '', '', ``, '', '', ``, '']);
-    
-    // Merge cells for totals matching image (cols 4,5,6 and cols 7,8,9 approx)
-    sheet.mergeCells(`D${totalsRow.number}:F${totalsRow.number}`);
-    sheet.mergeCells(`G${totalsRow.number}:I${totalsRow.number}`);
+    const pendingCost = dailyProfit.totals.pending_cost_total || 0;
+    const totalsRow = sheet.addRow(['', '', '', '', '', '', '']);
+    sheet.mergeCells(`A${totalsRow.number}:G${totalsRow.number}`);
 
-    const actualProfitCell = sheet.getCell(`D${totalsRow.number}`);
-    actualProfitCell.value = `Actual daily profit  ${totalProfit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-    
-    const totalProfitCell = sheet.getCell(`G${totalsRow.number}`);
-    totalProfitCell.value = `Total daily profit  ${totalProfit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    const actualProfitCell = sheet.getCell(`A${totalsRow.number}`);
+    actualProfitCell.value = `Posted profit  ${totalProfit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}${pendingCost ? `   |   Waiting for receivable  ${pendingCost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : ''}`;
+    const totalProfitCell = actualProfitCell;
 
     [actualProfitCell, totalProfitCell].forEach(cell => {
       cell.font = { name: 'Times New Roman', size: 12, italic: true, bold: true };
@@ -572,9 +572,9 @@ export default function ReportsPage() {
     } else if (t === "payment-requests") {
       showCached<PaymentRequest[]>(PAYMENT_REQUESTS_CACHE_KEY, setPaymentRequests);
     } else if (t === "finance-summary") {
-      showCached<FinanceSummary>(`reports:finance-summary-v3:${financePeriod}:${financeGroupBy}`, setFinanceSummary);
+      showCached<FinanceSummary>(`reports:finance-summary-v4:${financePeriod}:${financeGroupBy}`, setFinanceSummary);
     } else if (t === "daily-profit") {
-      showCached<DailyProfit>(`reports:daily-profit-v3:${dailyDate || "latest"}`, setDailyProfit);
+      showCached<DailyProfit>(`reports:daily-profit-v4:${dailyDate || "latest"}`, setDailyProfit);
     } else if (t === "income-statement") {
       showCached<IncomeStatement>("reports:income-statement", setIncomeStatement);
     } else if (t === "whatsapp-reports") {
@@ -600,14 +600,14 @@ export default function ReportsPage() {
         const data = await fetchCachedJson<FinanceSummary>(
           `${API_BASE}/reports/finance-summary?period=${financePeriod}&group_by=${financeGroupBy}`,
           undefined,
-          { ttlMs: 600_000, cacheKey: `reports:finance-summary-v3:${financePeriod}:${financeGroupBy}`, forceRefresh: force }
+          { ttlMs: 600_000, cacheKey: `reports:finance-summary-v4:${financePeriod}:${financeGroupBy}`, forceRefresh: force }
         );
         setFinanceSummary(data);
       } else if (t === "daily-profit") {
         const url = dailyDate
           ? `${API_BASE}/reports/daily-profit?report_date=${dailyDate}`
           : `${API_BASE}/reports/daily-profit`;
-        const data = await fetchCachedJson<DailyProfit>(url, undefined, { ttlMs: 600_000, cacheKey: `reports:daily-profit-v3:${dailyDate || "latest"}`, forceRefresh: force });
+        const data = await fetchCachedJson<DailyProfit>(url, undefined, { ttlMs: 600_000, cacheKey: `reports:daily-profit-v4:${dailyDate || "latest"}`, forceRefresh: force });
         setDailyProfit(data);
       } else if (t === "income-statement") {
         const data = await fetchCachedJson<IncomeStatement>(`${API_BASE}/reports/income-statement`, undefined, { ttlMs: 600_000, cacheKey: "reports:income-statement", forceRefresh: force });
@@ -638,7 +638,7 @@ export default function ReportsPage() {
         setWhatsappSummary(data);
         // Also preload daily profit for the spreadsheet button
         if (!dailyProfit) {
-            const dp = await fetchCachedJson<DailyProfit>(`${API_BASE}/reports/daily-profit`, undefined, { ttlMs: 600_000, cacheKey: "reports:daily-profit-v3:latest" });
+            const dp = await fetchCachedJson<DailyProfit>(`${API_BASE}/reports/daily-profit`, undefined, { ttlMs: 600_000, cacheKey: "reports:daily-profit-v4:latest" });
             setDailyProfit(dp);
         }
       }
@@ -1600,11 +1600,15 @@ export default function ReportsPage() {
             {financeSummary._warning && (
               <div className="login-error">{financeSummary._warning}</div>
             )}
+            <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+              Profit uses posted customer receivables only. Cost is counted once. Waiting receivable is cost recorded before the customer amount is posted, not a loss.
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px,1fr))", gap: 12 }}>
               <div className="card"><div className="card-label">Trips</div><div className="card-value">{financeSummary.totals.trip_count}</div></div>
               <div className="card"><div className="card-label">Revenue</div><div className="card-value green">{money(financeSummary.totals.revenue_total)}</div></div>
               <div className="card"><div className="card-label">Expense</div><div className="card-value red">{money(financeSummary.totals.expense_total)}</div></div>
-              <div className="card"><div className="card-label">Profit</div><div className={`card-value ${financeSummary.totals.profit >= 0 ? "green" : "red"}`}>{money(financeSummary.totals.profit)}</div></div>
+              <div className="card"><div className="card-label">Posted Profit</div><div className={`card-value ${financeSummary.totals.profit >= 0 ? "green" : "red"}`}>{money(financeSummary.totals.profit)}</div></div>
+              <div className="card"><div className="card-label">Waiting Receivable</div><div className="card-value">{money(financeSummary.totals.pending_cost || 0)}</div></div>
             </div>
             <div className="panel">
               <div className="panel-header">
@@ -1622,8 +1626,9 @@ export default function ReportsPage() {
                         ...(financeGroupBy !== "all" ? [financeGroupBy === "supervisor" ? "Assigned Supervisor" : "Vehicle"] : []),
                         "Trips",
                         "Revenue",
-                        "Expense",
-                        "Profit",
+                        "Cost",
+                        "Posted Profit",
+                        "Waiting",
                       ].map((h) => <th key={h}>{h}</th>)}
                     </tr>
                   </thead>
@@ -1636,6 +1641,7 @@ export default function ReportsPage() {
                         <td className="green">{money(p.revenue_total)}</td>
                         <td className="red">{money(p.expense_total)}</td>
                         <td className={p.profit >= 0 ? "green" : "red"}>{money(p.profit)}</td>
+                        <td>{(p.pending_cost || 0) > 0 ? money(p.pending_cost || 0) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1649,14 +1655,19 @@ export default function ReportsPage() {
         {tab === "daily-profit" && dailyProfit && (
           <div style={{ display: "grid", gap: 16 }}>
             {dailyProfit._warning && <div className="login-error">{dailyProfit._warning}</div>}
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+              Profit is customer receivable minus trip cost. Cost is counted once. Waiting means the receivable is not posted yet, so it is not a loss.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px,1fr))", gap: 12 }}>
               <div className="card"><div className="card-label">Report Date</div><div className="card-value">{dailyProfit.report_date || "No financial date"}</div></div>
               <div className="card"><div className="card-label">Vehicles</div><div className="card-value">{dailyProfit.totals.vehicle_count}</div></div>
-              <div className="card"><div className="card-label">Revenue</div><div className="card-value green">{money(dailyProfit.totals.revenue_total)}</div></div>
-              <div className="card"><div className="card-label">Net Profit</div><div className={`card-value ${dailyProfit.totals.net_profit_total >= 0 ? "green" : "red"}`}>{money(dailyProfit.totals.net_profit_total)}</div></div>
+              <div className="card"><div className="card-label">Posted Revenue</div><div className="card-value green">{money(dailyProfit.totals.revenue_total)}</div></div>
+              <div className="card"><div className="card-label">Cost</div><div className="card-value">{money(dailyProfit.totals.cost_total)}</div></div>
+              <div className="card"><div className="card-label">Posted Profit</div><div className={`card-value ${dailyProfit.totals.net_profit_total >= 0 ? "green" : "red"}`}>{money(dailyProfit.totals.net_profit_total)}</div></div>
+              <div className="card"><div className="card-label">Waiting Receivable</div><div className="card-value">{money(dailyProfit.totals.pending_cost_total || 0)}</div></div>
             </div>
             <div className="panel">
-              <div className="panel-header"><div className="panel-title">Daily Vehicle Profit Report</div></div>
+              <div className="panel-header"><div className="panel-title">Daily Vehicle Profit</div></div>
               <div style={{ padding: "16px 24px 0", fontStyle: "italic", fontWeight: "bold" }}>
                 Date - {dailyProfit.report_date || "No financial date"}
               </div>
@@ -1664,7 +1675,7 @@ export default function ReportsPage() {
                 <table className="fleet-table" style={{ border: "1px solid var(--border)", borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
                   <thead>
                     <tr>
-                      {["No", "Driver name", "Plate number", "Rent amount", "Daily Total cost", "Actual daily Total revenue", "Actual net profit", "Daily Net profit", "REMARK"].map((h) => (
+                      {["No", "Driver", "Plate", "Route", "Revenue", "Cost", "Result"].map((h) => (
                         <th key={h} style={{ border: "1px solid var(--border)", padding: "8px 12px", fontStyle: "italic", fontWeight: "normal", textAlign: "center", backgroundColor: "transparent" }}>{h}</th>
                       ))}
                     </tr>
@@ -1673,7 +1684,7 @@ export default function ReportsPage() {
                     {(filterRows(dailyProfit.rows as unknown as Record<string, unknown>[]) as unknown as typeof dailyProfit.rows).length === 0 ? (
                       <tr>
                         <td
-                          colSpan={9}
+                          colSpan={7}
                           style={{
                             border: "1px solid var(--border)",
                             padding: "18px 12px",
@@ -1690,24 +1701,21 @@ export default function ReportsPage() {
                         <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "center", fontStyle: "italic" }}>{r.no}</td>
                         <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}>{r.driver_name}</td>
                         <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}>{r.plate_number}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.rent_amount ? money(r.rent_amount) : ""}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.daily_total_cost ? money(r.daily_total_cost) : ""}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.actual_daily_total_revenue ? money(r.actual_daily_total_revenue) : ""}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right", fontStyle: "italic" }}>{money(r.actual_net_profit)}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right", fontStyle: "italic" }}>{money(r.daily_net_profit)}</td>
                         <td style={{ border: "1px solid var(--border)", padding: "6px 12px", fontStyle: "italic" }}>{r.remarks}</td>
+                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.receivable_posted ? money(r.actual_daily_total_revenue) : "—"}</td>
+                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.daily_total_cost ? money(r.daily_total_cost) : "—"}</td>
+                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right", fontStyle: "italic" }} className={r.receivable_posted ? (r.actual_net_profit >= 0 ? "green" : "red") : ""}>
+                          {r.receivable_posted ? money(r.actual_net_profit) : "Waiting"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                   {dailyProfit.rows.length > 0 && (
                     <tfoot>
                       <tr>
-                        <td colSpan={3} style={{ border: "0" }}></td>
-                        <td colSpan={4} style={{ border: "1px solid var(--border)", padding: "8px 12px", backgroundColor: "#7fe57f", color: "#000", fontWeight: "bold", textAlign: "center", fontStyle: "italic" }}>
-                          Actual daily profit {money(dailyProfit.totals.net_profit_total)}
-                        </td>
-                        <td colSpan={2} style={{ border: "1px solid var(--border)", padding: "8px 12px", backgroundColor: "#7fe57f", color: "#000", fontWeight: "bold", textAlign: "left", fontStyle: "italic" }}>
-                          Total daily profit {money(dailyProfit.totals.net_profit_total)}
+                        <td colSpan={7} style={{ border: "1px solid var(--border)", padding: "8px 12px", backgroundColor: "#7fe57f", color: "#000", fontWeight: "bold", textAlign: "left", fontStyle: "italic" }}>
+                          Posted profit {money(dailyProfit.totals.net_profit_total)}
+                          {(dailyProfit.totals.pending_cost_total || 0) > 0 ? ` · Waiting for receivable ${money(dailyProfit.totals.pending_cost_total || 0)}` : ""}
                         </td>
                       </tr>
                     </tfoot>
@@ -1724,6 +1732,9 @@ export default function ReportsPage() {
             {incomeStatement._warning && <div className="login-error">{incomeStatement._warning}</div>}
             <div className="panel">
               <div className="panel-header"><div className="panel-title">Income Statement</div></div>
+              <div className="muted" style={{ padding: "12px 24px 0", fontSize: 13 }}>
+                Confirmed receivables against approved payment requests. This is the books view, not the daily trip sheet.
+              </div>
               <div className="panel-body" style={{ display: "grid", gap: 12 }}>
                 {(
                   [
