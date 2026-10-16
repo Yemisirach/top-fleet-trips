@@ -167,6 +167,69 @@ export interface FinanceSummary {
   _warning?: string;
 }
 
+export interface FinanceCard {
+  key: "daily" | "weekly" | "monthly" | string;
+  label: string;
+  period_start: string;
+  period_end: string;
+  trip_count: number;
+  revenue_total: number;
+  expense_total: number;
+  profit: number;
+  pending_cost: number;
+}
+
+export interface FinanceCards {
+  as_of: string;
+  timezone: string;
+  cards: FinanceCard[];
+}
+
+export interface FinanceTrip {
+  trip_id: number;
+  trip_name: string;
+  trip_day: string | null;
+  driver_name: string;
+  plate_number: string;
+  route: string;
+  supervisor_name: string;
+  customer_name: string;
+  revenue_total: number;
+  cost_total: number;
+  profit: number;
+  pending_cost: number;
+  receivable_posted: boolean;
+  cost_source: "expense_lines" | "payment_request" | string;
+  expense_line_total: number;
+  request_total: number;
+}
+
+export interface FinanceTripDetail extends FinanceTrip {
+  receivables: Array<{
+    customer_name: string;
+    amount_due: number;
+    state: string;
+    date_created: string | null;
+  }>;
+  expense_lines: Array<{
+    type_name: string;
+    description: string;
+    quantity: number;
+    amount: number;
+    total: number;
+  }>;
+  payment_lines: Array<{
+    request_id: number;
+    request_name: string;
+    state: string;
+    item: string;
+    description: string;
+    quantity: number;
+    amount: number;
+    total: number;
+  }>;
+}
+
 export interface DailyProfitRow {
   no: number;
   driver_name: string;

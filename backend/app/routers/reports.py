@@ -864,6 +864,302 @@ async def finance_summary_report(
     return response
 
 
+_FINANCE_TRIP_CTE = """
+WITH revenue AS (
+    SELECT
+        trip_id,
+        COALESCE(SUM(amount_due), 0) AS amount,
+        MAX(customer_name) AS customer_name
+    FROM trip_receivable
+    GROUP BY trip_id
+),
+expense_requests AS (
+    SELECT
+        pr.trip_id,
+        COALESCE(SUM(COALESCE(prl.total, prl.amount * COALESCE(prl.quantity, 1), pr.amount_birr, pr.amount, 0)), 0) AS amount
+    FROM payment_request pr
+    LEFT JOIN payment_request_line prl ON prl.payment_request_id = pr.id
+    WHERE COALESCE(pr.is_trip_payment, false) = true
+    GROUP BY pr.trip_id
+),
+expenses AS (
+    SELECT
+        trip_id,
+        COALESCE(SUM(COALESCE(total_expense, amount * COALESCE(quantity, 1), 0)), 0) AS amount
+    FROM trip_expense_line
+    GROUP BY trip_id
+),
+bounds AS (
+    SELECT
+        (now() AT TIME ZONE 'Africa/Addis_Ababa')::date AS today,
+        date_trunc('week', (now() AT TIME ZONE 'Africa/Addis_Ababa'))::date AS week_start,
+        (date_trunc('week', (now() AT TIME ZONE 'Africa/Addis_Ababa'))::date + 6) AS week_end,
+        date_trunc('month', (now() AT TIME ZONE 'Africa/Addis_Ababa'))::date AS month_start,
+        (date_trunc('month', (now() AT TIME ZONE 'Africa/Addis_Ababa')) + interval '1 month' - interval '1 day')::date AS month_end
+),
+trip_finance AS (
+    SELECT
+        t.id AS trip_id,
+        COALESCE(NULLIF(t.name, ''), 'Trip #' || t.id::text) AS trip_name,
+        COALESCE(t.departure_date, t.create_date) AS trip_ts,
+        COALESCE(t.departure_date, t.create_date)::date AS trip_day,
+        COALESCE(driver.name, 'Unassigned') AS driver_name,
+        COALESCE(v.license_plate, 'Unassigned vehicle') AS plate_number,
+        departure.name AS departure_name,
+        destination.name AS destination_name,
+        COALESCE(supervisor_partner.name, 'Unassigned supervisor') AS supervisor_name,
+        COALESCE(r.amount, 0) AS revenue_total,
+        COALESCE(e.amount, 0) AS expense_line_total,
+        COALESCE(er.amount, 0) AS request_total,
+        COALESCE(NULLIF(e.amount, 0), er.amount, 0) AS cost_total,
+        CASE WHEN COALESCE(e.amount, 0) <> 0 THEN 'expense_lines' ELSE 'payment_request' END AS cost_source,
+        r.customer_name AS customer_name
+    FROM trip_trip t
+    LEFT JOIN revenue r ON r.trip_id = t.id
+    LEFT JOIN expenses e ON e.trip_id = t.id
+    LEFT JOIN expense_requests er ON er.trip_id = t.id
+    LEFT JOIN fleet_vehicle v ON t.vehicle_id = v.id
+    LEFT JOIN hr_employee driver ON t.driver_id = driver.id
+    LEFT JOIN trip_location departure ON t.departure_id = departure.id
+    LEFT JOIN trip_location destination ON t.destination_id = destination.id
+    LEFT JOIN LATERAL (
+        SELECT fvs.user_id
+        FROM fleet_vehicle_supervisor fvs
+        WHERE fvs.vehicle_id = t.vehicle_id
+        ORDER BY fvs.write_date DESC NULLS LAST, fvs.create_date DESC NULLS LAST, fvs.id DESC
+        LIMIT 1
+    ) vehicle_supervisor ON true
+    LEFT JOIN res_users supervisor_user ON supervisor_user.id = vehicle_supervisor.user_id
+    LEFT JOIN res_partner supervisor_partner ON supervisor_partner.id = supervisor_user.partner_id
+    WHERE COALESCE(t.departure_date, t.create_date) IS NOT NULL
+      AND (COALESCE(r.amount, 0) <> 0 OR COALESCE(NULLIF(e.amount, 0), er.amount, 0) <> 0)
+)
+"""
+
+
+def _finance_trip_payload(row) -> dict:
+    revenue = _as_float(row.revenue_total)
+    cost = _as_float(row.cost_total)
+    posted = revenue > 0
+    route_parts = [part for part in (row.departure_name, row.destination_name) if part]
+    return {
+        "trip_id": row.trip_id,
+        "trip_name": row.trip_name,
+        "trip_day": str(row.trip_day) if row.trip_day else None,
+        "driver_name": row.driver_name,
+        "plate_number": row.plate_number,
+        "route": "-".join(route_parts),
+        "supervisor_name": row.supervisor_name,
+        "customer_name": row.customer_name or "",
+        "revenue_total": revenue if posted else 0,
+        "cost_total": cost,
+        "profit": (revenue - cost) if posted else 0,
+        "pending_cost": 0 if posted else cost,
+        "receivable_posted": posted,
+        "cost_source": row.cost_source,
+        "expense_line_total": _as_float(row.expense_line_total),
+        "request_total": _as_float(row.request_total),
+    }
+
+
+def _finance_card(key: str, label: str, start, end, trips: int, revenue, cost, profit, pending) -> dict:
+    return {
+        "key": key,
+        "label": label,
+        "period_start": str(start),
+        "period_end": str(end),
+        "trip_count": trips or 0,
+        "revenue_total": _as_float(revenue),
+        "expense_total": _as_float(cost),
+        "profit": _as_float(profit),
+        "pending_cost": _as_float(pending),
+    }
+
+
+@router.get("/finance-cards")
+async def finance_cards_report(db: AsyncSession = Depends(get_session)) -> dict:
+    cache_key = "fleet:reports:finance-cards:v1"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    row = (await db.execute(text(_FINANCE_TRIP_CTE + """
+        SELECT
+            b.today,
+            b.week_start,
+            b.week_end,
+            b.month_start,
+            b.month_end,
+            COUNT(f.trip_id) FILTER (WHERE f.trip_day = b.today) AS daily_trips,
+            COALESCE(SUM(f.revenue_total) FILTER (WHERE f.trip_day = b.today AND f.revenue_total > 0), 0) AS daily_revenue,
+            COALESCE(SUM(f.cost_total) FILTER (WHERE f.trip_day = b.today), 0) AS daily_cost,
+            COALESCE(SUM(CASE WHEN f.trip_day = b.today AND f.revenue_total > 0 THEN f.revenue_total - f.cost_total ELSE 0 END), 0) AS daily_profit,
+            COALESCE(SUM(CASE WHEN f.trip_day = b.today AND f.revenue_total = 0 THEN f.cost_total ELSE 0 END), 0) AS daily_pending,
+            COUNT(f.trip_id) FILTER (WHERE f.trip_day BETWEEN b.week_start AND b.week_end) AS weekly_trips,
+            COALESCE(SUM(f.revenue_total) FILTER (WHERE f.trip_day BETWEEN b.week_start AND b.week_end AND f.revenue_total > 0), 0) AS weekly_revenue,
+            COALESCE(SUM(f.cost_total) FILTER (WHERE f.trip_day BETWEEN b.week_start AND b.week_end), 0) AS weekly_cost,
+            COALESCE(SUM(CASE WHEN f.trip_day BETWEEN b.week_start AND b.week_end AND f.revenue_total > 0 THEN f.revenue_total - f.cost_total ELSE 0 END), 0) AS weekly_profit,
+            COALESCE(SUM(CASE WHEN f.trip_day BETWEEN b.week_start AND b.week_end AND f.revenue_total = 0 THEN f.cost_total ELSE 0 END), 0) AS weekly_pending,
+            COUNT(f.trip_id) FILTER (WHERE f.trip_day BETWEEN b.month_start AND b.month_end) AS monthly_trips,
+            COALESCE(SUM(f.revenue_total) FILTER (WHERE f.trip_day BETWEEN b.month_start AND b.month_end AND f.revenue_total > 0), 0) AS monthly_revenue,
+            COALESCE(SUM(f.cost_total) FILTER (WHERE f.trip_day BETWEEN b.month_start AND b.month_end), 0) AS monthly_cost,
+            COALESCE(SUM(CASE WHEN f.trip_day BETWEEN b.month_start AND b.month_end AND f.revenue_total > 0 THEN f.revenue_total - f.cost_total ELSE 0 END), 0) AS monthly_profit,
+            COALESCE(SUM(CASE WHEN f.trip_day BETWEEN b.month_start AND b.month_end AND f.revenue_total = 0 THEN f.cost_total ELSE 0 END), 0) AS monthly_pending
+        FROM bounds b
+        LEFT JOIN trip_finance f ON true
+        GROUP BY b.today, b.week_start, b.week_end, b.month_start, b.month_end
+    """))).one()
+    response = {
+        "as_of": str(row.today),
+        "timezone": "Africa/Addis_Ababa",
+        "cards": [
+            _finance_card("daily", "Daily profit", row.today, row.today, row.daily_trips, row.daily_revenue, row.daily_cost, row.daily_profit, row.daily_pending),
+            _finance_card("weekly", "Weekly profit", row.week_start, row.week_end, row.weekly_trips, row.weekly_revenue, row.weekly_cost, row.weekly_profit, row.weekly_pending),
+            _finance_card("monthly", "Monthly profit", row.month_start, row.month_end, row.monthly_trips, row.monthly_revenue, row.monthly_cost, row.monthly_profit, row.monthly_pending),
+        ],
+    }
+    cache_set(cache_key, response, ttl_seconds=120)
+    return response
+
+
+@router.get("/finance-trips")
+async def finance_trips_report(
+    window: str = Query("line", pattern="^(card|line)$"),
+    period: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
+    period_start: Optional[date] = Query(None),
+    group_by: str = Query("all", pattern="^(all|supervisor|vehicle)$"),
+    group_label: str = Query(""),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    if window == "line" and period_start is None:
+        raise HTTPException(status_code=400, detail="period_start is required")
+
+    cache_key = f"fleet:reports:finance-trips:v1:{window}:{period}:{period_start or ''}:{group_by}:{group_label}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    rows = await db.execute(text(_FINANCE_TRIP_CTE + """
+        SELECT f.*
+        FROM trip_finance f
+        CROSS JOIN bounds b
+        WHERE (
+            (:window = 'card' AND (
+                (:period = 'daily' AND f.trip_day = b.today)
+                OR (:period = 'weekly' AND f.trip_day BETWEEN b.week_start AND b.week_end)
+                OR (:period = 'monthly' AND f.trip_day BETWEEN b.month_start AND b.month_end)
+            ))
+            OR (:window = 'line' AND (
+                (:period = 'daily' AND date_trunc('day', f.trip_ts)::date = :period_start)
+                OR (:period = 'weekly' AND date_trunc('week', f.trip_ts)::date = :period_start)
+                OR (:period = 'monthly' AND date_trunc('month', f.trip_ts)::date = :period_start)
+            ) AND (
+                :group_by = 'all'
+                OR (:group_by = 'supervisor' AND f.supervisor_name = :group_label)
+                OR (:group_by = 'vehicle' AND f.plate_number = :group_label)
+            ))
+        )
+        ORDER BY f.trip_day DESC, f.plate_number, f.trip_id
+        LIMIT 500
+    """), {
+        "window": window,
+        "period": period,
+        "period_start": period_start,
+        "group_by": group_by,
+        "group_label": group_label,
+    })
+    trips = [_finance_trip_payload(row) for row in rows.fetchall()]
+    response = {"window": window, "period": period, "trips": trips}
+    cache_set(cache_key, response, ttl_seconds=120)
+    return response
+
+
+@router.get("/finance-trips/{trip_id}")
+async def finance_trip_detail(trip_id: int, db: AsyncSession = Depends(get_session)) -> dict:
+    cache_key = f"fleet:reports:finance-trip-detail:v1:{trip_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    row = (await db.execute(
+        text(_FINANCE_TRIP_CTE + "SELECT * FROM trip_finance WHERE trip_id = :trip_id"),
+        {"trip_id": trip_id},
+    )).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Trip not found in the finance summary")
+
+    receivables = await db.execute(text("""
+        SELECT customer_name, amount_due, state, date_created
+        FROM trip_receivable
+        WHERE trip_id = :trip_id
+        ORDER BY id
+    """), {"trip_id": trip_id})
+    expenses = await db.execute(text("""
+        SELECT
+            COALESCE(et.name, 'Expense') AS type_name,
+            el.description,
+            el.quantity,
+            el.amount,
+            COALESCE(el.total_expense, el.amount * COALESCE(el.quantity, 1), 0) AS total
+        FROM trip_expense_line el
+        LEFT JOIN trip_expense_type et ON et.id = el.expense_type_id
+        WHERE el.trip_id = :trip_id
+        ORDER BY el.id
+    """), {"trip_id": trip_id})
+    payments = await db.execute(text("""
+        SELECT
+            pr.id AS request_id,
+            COALESCE(NULLIF(pr.name, ''), 'Request #' || pr.id::text) AS request_name,
+            pr.state,
+            COALESCE(prl.item, 'Payment request') AS item,
+            prl.description,
+            prl.quantity,
+            COALESCE(prl.amount, pr.amount_birr, pr.amount, 0) AS amount,
+            COALESCE(prl.total, prl.amount * COALESCE(prl.quantity, 1), pr.amount_birr, pr.amount, 0) AS total
+        FROM payment_request pr
+        LEFT JOIN payment_request_line prl ON prl.payment_request_id = pr.id
+        WHERE pr.trip_id = :trip_id
+          AND COALESCE(pr.is_trip_payment, false) = true
+        ORDER BY pr.id, prl.id
+    """), {"trip_id": trip_id})
+
+    payload = _finance_trip_payload(row)
+    payload["receivables"] = [
+        {
+            "customer_name": item.customer_name or "",
+            "amount_due": _as_float(item.amount_due),
+            "state": item.state or "",
+            "date_created": str(item.date_created) if item.date_created else None,
+        }
+        for item in receivables.fetchall()
+    ]
+    payload["expense_lines"] = [
+        {
+            "type_name": item.type_name,
+            "description": item.description or "",
+            "quantity": _as_float(item.quantity),
+            "amount": _as_float(item.amount),
+            "total": _as_float(item.total),
+        }
+        for item in expenses.fetchall()
+    ]
+    payload["payment_lines"] = [
+        {
+            "request_id": item.request_id,
+            "request_name": item.request_name,
+            "state": item.state or "",
+            "item": item.item or "",
+            "description": item.description or "",
+            "quantity": _as_float(item.quantity),
+            "amount": _as_float(item.amount),
+            "total": _as_float(item.total),
+        }
+        for item in payments.fetchall()
+    ]
+    cache_set(cache_key, payload, ttl_seconds=120)
+    return payload
+
+
 @router.get("/daily-profit")
 async def daily_profit_report(
     report_date: Optional[date] = Query(None),

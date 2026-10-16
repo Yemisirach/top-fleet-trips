@@ -9,6 +9,7 @@ import { LayoutDashboard, Moon, Sun, Plus, RefreshCw, Menu, ChevronDown, Chevron
 import { useTheme } from "@/hooks/useTheme";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import BackButton from "@/components/navigation/BackButton";
+import FinanceSummaryPanel from "@/components/reports/FinanceSummaryPanel";
 import { fetchCachedJson, fetchJson, readCachedJson, API_BASE } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cleanTripReference, money, normalizeState, stateLabel } from "@/lib/formatters";
@@ -1596,59 +1597,12 @@ export default function ReportsPage() {
 
         {/* ── Finance Summary ── */}
         {tab === "finance-summary" && financeSummary && (
-          <div style={{ display: "grid", gap: 16 }}>
-            {financeSummary._warning && (
-              <div className="login-error">{financeSummary._warning}</div>
-            )}
-            <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-              Profit uses posted customer receivables only. Cost is counted once. Waiting receivable is cost recorded before the customer amount is posted, not a loss.
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px,1fr))", gap: 12 }}>
-              <div className="card"><div className="card-label">Trips</div><div className="card-value">{financeSummary.totals.trip_count}</div></div>
-              <div className="card"><div className="card-label">Revenue</div><div className="card-value green">{money(financeSummary.totals.revenue_total)}</div></div>
-              <div className="card"><div className="card-label">Expense</div><div className="card-value red">{money(financeSummary.totals.expense_total)}</div></div>
-              <div className="card"><div className="card-label">Posted Profit</div><div className={`card-value ${financeSummary.totals.profit >= 0 ? "green" : "red"}`}>{money(financeSummary.totals.profit)}</div></div>
-              <div className="card"><div className="card-label">Waiting Receivable</div><div className="card-value">{money(financeSummary.totals.pending_cost || 0)}</div></div>
-            </div>
-            <div className="panel">
-              <div className="panel-header">
-                <div className="panel-title">
-                  By {financePeriod.charAt(0).toUpperCase() + financePeriod.slice(1)}
-                  {financeGroupBy !== "all" ? ` / ${financeGroupBy === "supervisor" ? "Assigned Supervisor" : "Vehicle"}` : ""}
-                </div>
-              </div>
-              <div style={{ overflowX: "auto" }}>
-                <table className="fleet-table">
-                  <thead>
-                    <tr>
-                      {[
-                        "Period",
-                        ...(financeGroupBy !== "all" ? [financeGroupBy === "supervisor" ? "Assigned Supervisor" : "Vehicle"] : []),
-                        "Trips",
-                        "Revenue",
-                        "Cost",
-                        "Posted Profit",
-                        "Waiting",
-                      ].map((h) => <th key={h}>{h}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {financeSummary.periods.map((p, i) => (
-                      <tr key={i}>
-                        <td>{p.period_start}</td>
-                        {financeGroupBy !== "all" && <td>{p.group_label || "Unassigned"}</td>}
-                        <td>{p.trip_count}</td>
-                        <td className="green">{money(p.revenue_total)}</td>
-                        <td className="red">{money(p.expense_total)}</td>
-                        <td className={p.profit >= 0 ? "green" : "red"}>{money(p.profit)}</td>
-                        <td>{(p.pending_cost || 0) > 0 ? money(p.pending_cost || 0) : "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+          <FinanceSummaryPanel
+            summary={financeSummary}
+            period={financePeriod}
+            groupBy={financeGroupBy}
+            onPeriodChange={setFinancePeriod}
+          />
         )}
 
         {/* ── Daily Profit ── */}
