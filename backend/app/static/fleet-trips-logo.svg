@@ -1,10 +1,17 @@
-<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Fleet Trips logo">
-  <rect width="128" height="128" rx="28" fill="#00499E"/>
-  <path d="M31 75C31 58.984 43.984 46 60 46H91" stroke="#EAF4FF" stroke-width="10" stroke-linecap="round"/>
-  <path d="M38 84H91C99.284 84 106 77.284 106 69V55" stroke="#0E9849" stroke-width="10" stroke-linecap="round"/>
-  <circle cx="40" cy="84" r="9" fill="#EAF4FF"/>
-  <circle cx="89" cy="84" r="9" fill="#EAF4FF"/>
-  <circle cx="91" cy="46" r="8" fill="#0E9849"/>
-  <path d="M23 36H58" stroke="#EAF4FF" stroke-width="8" stroke-linecap="round"/>
-  <path d="M23 52H45" stroke="#9DFFCA" stroke-width="8" stroke-linecap="round"/>
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="TOP Fleet logo">
+  <rect width="256" height="256" rx="54" fill="#05070C"/>
+  <path d="M48 176C76 147 113 132 158 132H202" stroke="#F7FBFF" stroke-width="14" stroke-linecap="round"/>
+  <path d="M56 196H178C198 196 214 180 214 160V144" stroke="#19B765" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="70" cy="196" r="13" fill="#F7FBFF"/>
+  <circle cx="176" cy="196" r="13" fill="#F7FBFF"/>
+  <path d="M37 70H112" stroke="#1588FF" stroke-width="24" stroke-linecap="round"/>
+  <path d="M74 70V136" stroke="#1588FF" stroke-width="24" stroke-linecap="round"/>
+  <path d="M163 68H202C220 68 231 78 231 94C231 111 219 121 201 121H177" stroke="#1588FF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="133" cy="94" r="39" fill="#0B66D8"/>
+  <circle cx="128" cy="88" r="29" fill="#1598FF"/>
+  <path d="M105 96C118 106 140 108 160 98" stroke="#7FD1FF" stroke-width="6" stroke-linecap="round"/>
+  <path d="M112 114C124 121 143 122 156 115" stroke="#0961BD" stroke-width="5" stroke-linecap="round" opacity=".7"/>
+  <path d="M137 52C144 34 161 27 181 33C176 51 159 60 137 52Z" fill="#39D06F"/>
+  <path d="M139 52C151 44 163 39 178 35" stroke="#B8F3C7" stroke-width="4" stroke-linecap="round" opacity=".8"/>
+  <path d="M38 33H218" stroke="#111827" stroke-width="4" stroke-linecap="round" opacity=".55"/>
 </svg>

@@ -1,17 +1,25 @@
 "use client";
 import { useState, useCallback } from "react";
 import Link from "next/link";
-import { PanelRightOpen, Map, History } from "lucide-react";
+import { ExternalLink, PanelRightOpen, Map, History } from "lucide-react";
 import {
+  buildMayetUrl,
+  buildJourneyRoute,
+  getJourneyDestinations,
+  getJourneyDisplayLegs,
+  getPrimaryJourneyDestination,
+  isJourneyDestination,
+  mayetSearchTerm,
   money,
   normalizeState,
   stateLabel,
   getPaymentState,
   paymentLabel,
   getOrderCount,
-  firstPlateNumber,
+  legMoneyLabel,
 } from "@/lib/formatters";
-import { fetchJson, API_BASE } from "@/lib/api";
+import { fetchCachedJson, API_BASE } from "@/lib/api";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import type { Trip, TripLeg } from "@/types/trip";
 
 interface TripCardProps {
@@ -27,23 +35,20 @@ interface TimelineEntry {
 }
 
 function buildLocalTimeline(trip: Trip): TimelineEntry[] {
-  const legs = Array.isArray(trip.trips) ? trip.trips : [];
-  const destination =
-    Array.isArray(trip.destinations) && trip.destinations.length
-      ? trip.destinations[0]
-      : "Pending destination";
+  const legs = getJourneyDisplayLegs(trip);
+  const destination = getPrimaryJourneyDestination(trip);
   if (!legs.length) {
     return [
       {
         timestamp: trip.departure_date || "",
-        location: trip.journey_start || trip.origin || "TOP Factory",
+        location: trip.journey_start || trip.origin || "Origin not set",
         note: `Journey opened toward ${destination}`,
         source: "Dashboard",
       },
       {
         timestamp: trip.return_date || "",
-        location: trip.journey_end || "TOP Factory",
-        note: `Return to ${trip.journey_end || "TOP Factory"} pending`,
+        location: trip.journey_end || "Return location not set",
+        note: `Return to ${trip.journey_end || "return location not set"} pending`,
         source: "Dashboard",
       },
     ];
@@ -52,24 +57,24 @@ function buildLocalTimeline(trip: Trip): TimelineEntry[] {
     const e: TimelineEntry[] = [
       {
         timestamp: leg.departure_date || trip.departure_date || "",
-        location: leg.origin || trip.origin || "TOP Factory",
-        note: `Trip leg toward ${leg.destination || "destination"} · Revenue ${money(leg.revenue || 0)} · Expense ${money(leg.expense || 0)}`,
-        source: "Odoo",
+        location: leg.origin || trip.origin || "Origin not set",
+        note: `${leg.synthetic ? "Return leg" : "Trip leg"} toward ${leg.destination || "destination"} · Revenue ${money(leg.revenue || 0)} · Expense ${money(leg.expense || 0)}`,
+        source: leg.synthetic ? "Route" : "Odoo",
       },
     ];
     if (leg.arrival_date)
       e.push({
         timestamp: leg.arrival_date,
         location: leg.destination || "Destination",
-        note: `Arrived after ${leg.distance_km || 0} km`,
+        note: leg.distance_km ? `Arrived after ${leg.distance_km} km` : "Arrived",
         source: "GPS",
       });
     return e;
   });
   entries.push({
     timestamp: trip.return_date || "",
-    location: trip.journey_end || "TOP Factory",
-    note: `Journey ends when vehicle returns to ${trip.journey_end || "TOP Factory"}`,
+    location: trip.journey_end || "Return location not set",
+    note: `Journey ends when vehicle returns to ${trip.journey_end || "return location not set"}`,
     source: "Dashboard",
   });
   return entries;
@@ -83,23 +88,23 @@ export default function TripCard({ trip, targetId }: TripCardProps) {
   const state = normalizeState(trip.status);
   const payState = getPaymentState(trip);
   const tripId = String(trip.id || "");
-  const legs = Array.isArray(trip.trips) ? trip.trips : [];
-  const destinations = Array.isArray(trip.destinations) ? trip.destinations : [];
-  const journeyStart = trip.journey_start || "TOP Factory";
-  const journeyEnd = trip.journey_end || "TOP Factory";
+  const legs = getJourneyDisplayLegs(trip);
+  const journeyStart = trip.journey_start || "Origin not set";
+  const journeyEnd = trip.journey_end || "Return location not set";
   const origin = trip.origin || journeyStart;
-  const destination =
-    destinations[0] || (legs[0] && legs[0].destination) || "Pending destination";
+  const destination = getPrimaryJourneyDestination(trip);
+  const route = buildJourneyRoute(trip);
+  const vehicleRef = trip.vehicle_plate || trip.vehicle_id || tripId;
+  const mayetHref = buildMayetUrl(trip.mayet_url, vehicleRef, tripId);
+  const mayetSearch = mayetSearchTerm(vehicleRef);
 
   const totalDistance = legs.reduce((s, l) => s + Number(l.distance_km || 0), 0);
-  const seed = Number(tripId.slice(-4)) || 1;
-  const moving = state === "dispatched";
-  const speed = moving ? 58 + (seed % 24) : 0;
-  const fuel = 38 + (seed % 47);
-  const telemetryDistance = totalDistance || 420 + (seed % 900);
+  const speed = typeof trip.mayet_speed === "number" ? trip.mayet_speed : null;
+  const fuel = typeof trip.mayet_fuel_level === "number" ? trip.mayet_fuel_level : null;
+  const telemetryDistance = totalDistance || null;
   const visibleLegs = legs.length
     ? legs.slice(0, 3)
-    : [{ origin, destination, distance_km: telemetryDistance, status: state, revenue: trip.total_revenue, expense: trip.total_expense }];
+    : [{ origin, destination, status: state, revenue: trip.total_revenue, expense: trip.total_expense }];
   const profit = Number(trip.total_revenue || 0) - Number(trip.total_expense || 0);
 
   const toggleTimeline = useCallback(async () => {
@@ -110,8 +115,10 @@ export default function TripCard({ trip, targetId }: TripCardProps) {
     setTimelineOpen(true);
     setTimelineLoading(true);
     try {
-      const data = await fetchJson<{ timeline?: TimelineEntry[] }>(
-        `${API_BASE}/journeys/${encodeURIComponent(tripId)}/timeline`
+      const data = await fetchCachedJson<{ timeline?: TimelineEntry[] }>(
+        `${API_BASE}/journeys/${encodeURIComponent(tripId)}/timeline`,
+        undefined,
+        { ttlMs: 300_000, cacheKey: `timeline:${tripId}` }
       );
       setTimeline(data.timeline || buildLocalTimeline(trip));
     } catch {
@@ -160,32 +167,37 @@ export default function TripCard({ trip, targetId }: TripCardProps) {
           <div>{paymentLabel(trip)}</div>
         </div>
         <div className="meta-item">
-          <div className="trip-meta-label muted">Mayet GPS</div>
-          <div>{trip.mayet_status || "No cache"}</div>
+          <div className="trip-meta-label muted">DB Location</div>
+          <div>{trip.current_location || trip.current_location_note || trip.destination || "Pending"}</div>
         </div>
         <div className="meta-item">
-          <div className="trip-meta-label muted">Trips Inside</div>
-          <div>{trip.trip_count || visibleLegs.length} trip{Number(trip.trip_count || visibleLegs.length) === 1 ? "" : "s"}</div>
+          <div className="trip-meta-label muted">Trips</div>
+          <div>{visibleLegs.length} trip{visibleLegs.length === 1 ? "" : "s"}</div>
         </div>
       </div>
 
       {/* Route */}
       <div className="route-panel">
         <div className="route-line">
-          <span>{journeyStart}</span>
-          <span className="route-arrow">→</span>
-          <span>{destination}</span>
-          <span className="route-arrow">→</span>
-          <span>{journeyEnd}</span>
+          {route.split(" → ").map((stop, index, stops) => (
+            <span key={`${stop}-${index}`} style={{ display: "contents" }}>
+              <span>{stop}</span>
+              {index < stops.length - 1 && <span className="route-arrow">→</span>}
+            </span>
+          ))}
+        </div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+          {getJourneyDestinations(trip)}
         </div>
         <div className="leg-list">
           {visibleLegs.map((leg, i) => (
             <div className="leg-row" key={i}>
               <span>
-                <strong>{leg.origin || origin}</strong> → {leg.destination || destination}
+                <strong>{leg.origin || origin}</strong> → {isJourneyDestination(leg.destination) ? leg.destination : destination}
+                {leg.synthetic && <span className="muted"> · return</span>}
               </span>
               <span>
-                {money(leg.revenue || 0)} / {money(leg.expense || 0)}
+                {legMoneyLabel(leg)}
               </span>
             </div>
           ))}
@@ -220,14 +232,14 @@ export default function TripCard({ trip, targetId }: TripCardProps) {
             {paymentLabel(trip)}
           </div>
         </div>
-        <div className="money-box"><div className="money-label">Orders</div><div className="money-value blue">{getOrderCount(trip)}</div></div>
+        <div className="money-box"><div className="money-label">Trips</div><div className="money-value blue">{getOrderCount(trip)}</div></div>
       </div>
 
       {/* Telemetry */}
       <div className="telemetry-grid">
-        <div className="telemetry-box"><div className="telemetry-label">Speed</div><div className="telemetry-value">{speed} km/h</div></div>
-        <div className="telemetry-box"><div className="telemetry-label">Fuel</div><div className="telemetry-value">{fuel}%</div></div>
-        <div className="telemetry-box"><div className="telemetry-label">Distance</div><div className="telemetry-value">{telemetryDistance} km</div></div>
+        <div className="telemetry-box"><div className="telemetry-label">Speed</div><div className="telemetry-value">{speed === null ? "N/A" : `${speed} km/h`}</div></div>
+        <div className="telemetry-box"><div className="telemetry-label">Fuel</div><div className="telemetry-value">{fuel === null ? "N/A" : `${fuel}%`}</div></div>
+        <div className="telemetry-box"><div className="telemetry-label">Distance</div><div className="telemetry-value">{telemetryDistance === null ? "N/A" : `${telemetryDistance} km`}</div></div>
       </div>
 
       {/* Actions */}
@@ -235,18 +247,22 @@ export default function TripCard({ trip, targetId }: TripCardProps) {
         <Link className="btn primary" href={`/detail?journey_id=${encodeURIComponent(tripId)}`}>
           <PanelRightOpen size={16} /> Detail
         </Link>
-        <button
+        <Link
           className="btn"
-          type="button"
-          onClick={() => {
-            const plate = trip.vehicle_plate || trip.vehicle_id || tripId;
-            const searchStr = firstPlateNumber(plate);
-            if (searchStr) navigator.clipboard.writeText(searchStr);
-            window.open(`https://mayetgps.com/objects?search=${encodeURIComponent(searchStr)}`, "mayet_gps");
-          }}
+          href={`/map?journey_id=${encodeURIComponent(tripId)}&vehicle=${encodeURIComponent(vehicleRef)}`}
         >
-          <Map size={16} /> Map
-        </button>
+          <Map size={16} /> View Map
+        </Link>
+        <a
+          className="btn"
+          href={mayetHref}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => mayetSearch && void copyTextToClipboard(mayetSearch)}
+          title={`Copies ${mayetSearch} before opening Mayet`}
+        >
+          <ExternalLink size={16} /> View on Mayet
+        </a>
         <button className="btn" type="button" onClick={toggleTimeline}>
           <History size={16} /> Timeline
         </button>

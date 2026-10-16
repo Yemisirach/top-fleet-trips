@@ -1,48 +1,44 @@
 "use client";
 import { Sun, Moon, Menu } from "lucide-react";
-import type { DashboardMode } from "@/types/dashboard";
 
 interface TopbarProps {
   title: string;
   subtitle: string;
-  mode: DashboardMode;
-  modeBadge?: string;
+  modeLabel?: string;
   modeWarning?: string;
   theme: "light" | "dark";
   onThemeToggle: () => void;
-  onModeChange: (m: DashboardMode) => void;
   onMenuClick: () => void;
   searchValue: string;
   onSearchChange: (v: string) => void;
-  onSearchChip: (v: string) => void;
 }
-
-const SEARCH_CHIPS = ["dispatched", "available", "done", "pending"];
 
 export default function Topbar({
   title,
   subtitle,
-  mode,
-  modeBadge,
+  modeLabel,
   modeWarning,
   theme,
   onThemeToggle,
-  onModeChange,
   onMenuClick,
   searchValue,
   onSearchChange,
-  onSearchChip,
 }: TopbarProps) {
-  const badgeClass = modeWarning
-    ? "mode-badge warning"
-    : mode === "demo"
-    ? "mode-badge demo"
-    : "mode-badge";
+  const badgeClass = modeWarning ? "mode-badge warning" : "mode-badge";
 
   return (
     <div className="fleet-topbar" style={{ gap: 12 }}>
       {/* Left: menu + title */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+        <button
+          type="button"
+          className="btn md-hidden"
+          onClick={onMenuClick}
+          aria-label="Open menu"
+          style={{ minHeight: 36, minWidth: 36, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <Menu size={18} />
+        </button>
 
         <div style={{ minWidth: 0 }}>
           <div
@@ -67,37 +63,14 @@ export default function Topbar({
           onChange={(e) => onSearchChange(e.target.value)}
           style={{ minHeight: 36, flex: 1, width: "auto", minWidth: 200 }}
         />
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {SEARCH_CHIPS.map((chip) => (
-            <button
-              key={chip}
-              className="btn"
-              style={{ minHeight: 36, fontSize: 12, padding: "4px 10px", whiteSpace: "nowrap" }}
-              data-search-chip={chip}
-              onClick={() => onSearchChip(chip)}
-            >
-              {chip}
-            </button>
-          ))}
-        </div>
       </div>
 
-      {/* Right: mode badge + mode select + theme */}
+      {/* Right: data source badge + theme */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
         <span className={badgeClass} id="mode-badge">
           <span className="mode-dot" />
-          <span id="mode-label">{modeWarning || (mode === "demo" ? "Demo DB" : "Live DB")}</span>
+          <span id="mode-label">{modeWarning || modeLabel || "Live Odoo"}</span>
         </span>
-        <select
-          id="mode-select"
-          className="fleet-input"
-          style={{ minHeight: 36, width: "auto", paddingRight: 28 }}
-          value={mode}
-          onChange={(e) => onModeChange(e.target.value as DashboardMode)}
-        >
-          <option value="live">Live DB</option>
-          <option value="demo">Demo DB</option>
-        </select>
         <button className="btn" id="theme-toggle" onClick={onThemeToggle}>
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           <span id="theme-label">{theme === "dark" ? "Light" : "Dark"}</span>

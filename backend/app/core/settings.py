@@ -3,20 +3,33 @@ import os
 from pydantic import BaseModel
 
 
+def _env_bool(key: str, default: bool) -> bool:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _database_url() -> str:
+    return (
+        os.getenv("DATABASE_URL")
+        or os.getenv("ODOO_DATABASE_URL")
+        or "postgresql+asyncpg://localhost:5432/fleet_trips"
+    )
+
+
+def _odoo_database_url() -> str:
+    return os.getenv("ODOO_DATABASE_URL") or os.getenv("DATABASE_URL") or ""
+
+
 class Settings(BaseModel):
     app_name: str = os.getenv("APP_NAME", "Fleet Trips API")
     environment: str = os.getenv("ENVIRONMENT", "development")
     snapshot_path: str = os.getenv("SNAPSHOT_PATH", "/tmp/fleet_snapshot.json")
     # Primary app DB (for fleet-trips app state)
-    database_url: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://localhost:5432/fleet_trips",
-    )
+    database_url: str = _database_url()
     # Odoo read replica / source DB
-    odoo_database_url: str = os.getenv(
-        "ODOO_DATABASE_URL",
-        "",
-    )
+    odoo_database_url: str = _odoo_database_url()
     odoo_url: str = os.getenv("ODOO_URL", "")
     odoo_db: str = os.getenv("ODOO_DB", "Testbed")
     db_connect_timeout_seconds: float = float(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "5"))
@@ -26,6 +39,10 @@ class Settings(BaseModel):
     mayet_url: str = os.getenv("MAYET_URL", "https://mayetgps.com/")
     mayet_username: str = os.getenv("MAYET_USERNAME", "")
     mayet_password: str = os.getenv("MAYET_PASSWORD", "")
+    auth_cookie_secure: bool = _env_bool(
+        "FLEET_AUTH_COOKIE_SECURE",
+        os.getenv("ENVIRONMENT", "development").lower() not in {"dev", "development", "local", "test"},
+    )
 
 
 @lru_cache

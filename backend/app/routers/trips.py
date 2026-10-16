@@ -5,9 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
 from app.services.fleet_odoo_service import get_fleet_trips, get_fleet_trip_by_id
-from app.repositories.memory import repo
 from app.models.trip import TripCreate, TripUpdate, ExpenseLine
-from app.mock_data import mock_db
 
 router = APIRouter()
 
@@ -35,7 +33,7 @@ def _trip_to_dict(trip) -> dict:
 @router.get("")
 async def list_trips(
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(500, ge=1, le=500),
     db: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """List all trips from Odoo."""
@@ -53,12 +51,15 @@ async def get_trip(trip_id: int, db: AsyncSession = Depends(get_session)) -> dic
 
 
 @router.get("/{trip_id}/timeline")
-async def get_trip_timeline(trip_id: int) -> dict:
-    """Get timeline entries for a specific trip (demo mode via mock_db)."""
-    timeline = mock_db.get_trip_timeline(trip_id)
-    if timeline is None:
-        raise HTTPException(status_code=404, detail="Trip timeline not found")
-    return {"trip_id": trip_id, "timeline": timeline}
+async def get_trip_timeline(
+    trip_id: int,
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """Get timeline entries for a specific trip from Odoo."""
+    from app.routers.journeys import get_journey_timeline
+
+    data = await get_journey_timeline(trip_id, db)
+    return {"trip_id": trip_id, "timeline": data["timeline"]}
 
 
 @router.post("")

@@ -1,9 +1,32 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import PwaRegister from "@/components/PwaRegister";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "Fleet Trips",
-  description: "Fleet trip management dashboard — Topwater Ethiopia",
+  title: "TOP Fleet",
+  description: "Fleet management dashboard — Topwater Ethiopia",
+  manifest: "/manifest.webmanifest",
+  applicationName: "TOP Fleet",
+  appleWebApp: {
+    capable: true,
+    title: "TOP Fleet",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/pwa-icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/pwa-icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#08101d",
 };
 
 export default function RootLayout({
@@ -13,19 +36,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap"
-          rel="stylesheet"
-        />
-      </head>
-      <body>{children}</body>
+      <body>
+        <PwaRegister />
+        {children}
+      </body>
     </html>
   );
 }

@@ -4,13 +4,14 @@ import { useEffect, useState, useCallback } from "react";
 type Theme = "light" | "dark";
 
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "light";
+    return (localStorage.getItem("fleetTheme") as Theme) || "light";
+  });
 
   useEffect(() => {
-    const saved = (localStorage.getItem("fleetTheme") as Theme) || "light";
-    setTheme(saved);
-    document.documentElement.classList.toggle("dark", saved === "dark");
-  }, []);
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [theme]);
 
   const toggle = useCallback(() => {
     setTheme((prev) => {

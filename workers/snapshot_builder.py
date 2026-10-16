@@ -49,7 +49,7 @@ async def build_snapshot():
         return
 
     if data.get("_mode") != "live":
-        print(f"  → Live data unavailable, not caching fallback: {data.get('_warning', 'unknown error')}")
+        print(f"  → Live data unavailable, skipping snapshot: {data.get('_warning', 'unknown error')}")
         return
 
     snapshot = {

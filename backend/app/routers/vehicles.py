@@ -12,7 +12,7 @@ router = APIRouter()
 @router.get("")
 async def list_vehicles(
     skip: int = 0,
-    limit: int = 100,
+    limit: int = 500,
     db: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """List all fleet vehicles from Odoo."""
@@ -56,7 +56,10 @@ async def get_vehicle(
 
 
 @router.post("/supervisors")
-async def post_supervisors(payload: list[VehicleSupervisor]) -> dict[str, int]:
-    """Assign supervisors to vehicles."""
-    assign_supervisors(payload)
-    return {"count": len(payload)}
+async def post_supervisors(
+    payload: list[VehicleSupervisor],
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, int]:
+    """Assign supervisors to vehicles in the Odoo-backed supervisor table."""
+    count = await assign_supervisors(db, payload)
+    return {"count": count}

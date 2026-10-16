@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useRef } from "react";
 import Link from "next/link";
-import { resolveCityCoords, CITY_COORDS } from "@/lib/cityCoords";
-import { paymentLabel, stateLabel, firstPlateNumber } from "@/lib/formatters";
+import { resolveCityCoords } from "@/lib/cityCoords";
+import { getJourneyDestinations, getJourneyRouteStops, paymentLabel, stateLabel } from "@/lib/formatters";
 import type { Trip } from "@/types/trip";
 
 interface DashboardMapProps {
@@ -40,37 +40,23 @@ export default function DashboardMap({ trips }: DashboardMapProps) {
 
       const points: [number, number][] = [];
       trips.slice(0, 12).forEach((trip) => {
-        const origin = trip.origin || "Addis Ababa";
-        const dest =
-          Array.isArray(trip.destinations) && trip.destinations.length
-            ? trip.destinations[0]
-            : trip.destination;
-        const o = resolveCityCoords(origin);
-        const d = resolveCityCoords(dest);
-        if (o) {
-          points.push(o);
-          L.circleMarker(o, {
+        const routePoints = getJourneyRouteStops(trip)
+          .map((stop) => ({ stop, point: resolveCityCoords(stop) }))
+          .filter((item): item is { stop: string; point: [number, number] } => Boolean(item.point));
+
+        routePoints.forEach(({ stop, point }, index) => {
+          points.push(point);
+          L.circleMarker(point, {
             radius: 6,
-            color: "#00499e",
-            fillColor: "#00499e",
+            color: index === 0 ? "#00499e" : "#0e9849",
+            fillColor: index === 0 ? "#00499e" : "#0e9849",
             fillOpacity: 0.85,
           })
             .addTo(layer)
-            .bindPopup(`<b>${trip.vehicle_plate || trip.id}</b><br>${origin}`);
-        }
-        if (d) {
-          points.push(d);
-          L.circleMarker(d, {
-            radius: 7,
-            color: "#0e9849",
-            fillColor: "#0e9849",
-            fillOpacity: 0.85,
-          })
-            .addTo(layer)
-            .bindPopup(`<b>${trip.vehicle_plate || trip.id}</b><br>${dest}`);
-        }
-        if (o && d)
-          L.polyline([o, d], { color: "#00499e", weight: 3, opacity: 0.7 }).addTo(layer);
+            .bindPopup(`<b>${trip.vehicle_plate || trip.id}</b><br>${stop}`);
+        });
+        if (routePoints.length > 1)
+          L.polyline(routePoints.map(({ point }) => point), { color: "#00499e", weight: 3, opacity: 0.7 }).addTo(layer);
       });
 
       if (points.length) {
@@ -97,16 +83,14 @@ export default function DashboardMap({ trips }: DashboardMapProps) {
           <div className="empty">No map records.</div>
         ) : (
           sideTrips.map((t) => (
-            <button
+              <button
               key={t.id}
               className="map-side-row"
               type="button"
               style={{ cursor: "pointer", textAlign: "left" }}
               onClick={() => {
                 const plate = t.vehicle_plate || t.vehicle_id || String(t.id);
-                const searchStr = firstPlateNumber(plate);
-                if (searchStr) navigator.clipboard.writeText(searchStr);
-                window.open(`https://mayetgps.com/objects?search=${encodeURIComponent(searchStr)}`, "mayet_gps");
+                window.location.href = `/map?journey_id=${encodeURIComponent(t.id)}&vehicle=${encodeURIComponent(plate)}`;
               }}
             >
               <div className="map-side-label">
@@ -114,8 +98,7 @@ export default function DashboardMap({ trips }: DashboardMapProps) {
               </div>
               <div className="map-side-value">{t.vehicle_plate || String(t.id)}</div>
               <div className="muted" style={{ fontSize: 12 }}>
-                {t.customer_name || "Customer"} ·{" "}
-                {Array.isArray(t.destinations) ? t.destinations.join(", ") : t.destination || "Destination pending"}
+                {t.customer_name || "Customer not set"} · {getJourneyDestinations(t)}
               </div>
             </button>
           ))

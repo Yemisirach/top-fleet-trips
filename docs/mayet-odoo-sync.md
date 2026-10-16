@@ -56,6 +56,31 @@ The dashboard and map read those cached records through:
 
 ## Sample Scenario Seeding
 
-For demos, use mock/demo mode instead of writing fake trips into live Odoo. Demo mode already covers planned, in-progress, completed, cancelled, paid, pending, partial payment, multiple destinations, and multiple vehicle order counts.
+The app no longer serves mock/demo trips. Any sample scenarios must be created in a separate staging Odoo database, never in production Odoo.
 
-If real Odoo demo records are needed, create them in a separate staging database first.
+For payment-request coverage, use:
+
+`backend/scripts/seed_payment_request_scenarios.py`
+
+It logs into a running Fleet Trips API and seeds one trip-associated payment request for each supported state:
+
+- `draft`
+- `confirmed`
+- `approved`
+- `paid`
+- `done`
+- `posted`
+- `cancelled`
+
+Each request is attached to a real trip from `/api/trips` and includes multiple line items by default:
+
+```bash
+python3 backend/scripts/seed_payment_request_scenarios.py --base-url http://127.0.0.1:8004 --items-per-request 4
+```
+
+On the server, use direct DB mode with the backend `.env`:
+
+```bash
+cd /root/top-fleet-trips/backend
+python3 -m dotenv -f .env run -- env PYTHONPATH=. DB_CONNECT_TIMEOUT_SECONDS=60 DB_QUERY_TIMEOUT_SECONDS=60 python3 scripts/seed_payment_request_scenarios.py --direct-db --items-per-request 4
+```

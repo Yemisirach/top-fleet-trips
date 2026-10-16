@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fleet Trips - Reports</title>
+    <title>TOP Fleet - Reports</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
@@ -134,7 +134,6 @@
             white-space: nowrap;
         }
         .mode-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--secondary); }
-        .mode-badge.demo .mode-dot { background: var(--amber); }
         .mode-badge.warning .mode-dot { background: var(--red); }
         .grid {
             display: grid;
@@ -349,16 +348,16 @@
     <div class="layout">
         <aside class="sidebar">
             <div class="brand">
-                <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="Fleet Trips"></div>
+                <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="TOP Fleet"></div>
                 <div>
-                    <div class="brand-title">Fleet Trips</div>
+                    <div class="brand-title">TOP Fleet</div>
                     <div class="brand-subtitle">Reports</div>
                 </div>
             </div>
             <nav class="nav">
                 <a href="/"><i data-lucide="layout-dashboard" class="icon"></i>Dashboard</a>
                 <a href="/report.html" class="active"><i data-lucide="file-bar-chart" class="icon"></i>Reports</a>
-                <a href="/report.html#payment-requests"><i data-lucide="credit-card" class="icon"></i>Payments</a>
+                <a href="/payments.html"><i data-lucide="credit-card" class="icon"></i>Payments</a>
             </nav>
         </aside>
 
@@ -370,10 +369,6 @@
                 </div>
                 <div class="controls">
                     <div class="mode-badge" id="mode-badge"><span class="mode-dot"></span><span id="mode-label">Live DB</span></div>
-                    <select id="mode-select" aria-label="Data source">
-                        <option value="live">Live DB</option>
-                        <option value="demo">Demo DB</option>
-                    </select>
                     <button class="btn" id="theme-toggle" type="button"><i data-lucide="moon" class="icon"></i><span id="theme-label">Dark</span></button>
                 </div>
             </div>
@@ -390,7 +385,6 @@
                 <div class="tabs">
                     <button class="tab active" data-report="current-location"><i data-lucide="map-pin" class="icon"></i>Current Location</button>
                     <button class="tab" data-report="location-summary"><i data-lucide="map-pinned" class="icon"></i>Location Summary</button>
-                    <button class="tab" data-report="payment-requests"><i data-lucide="credit-card" class="icon"></i>Payment Requests</button>
                     <button class="tab" data-report="finance-summary"><i data-lucide="chart-no-axes-combined" class="icon"></i>Finance Summary</button>
                     <button class="tab" data-report="daily-profit"><i data-lucide="message-square-text" class="icon"></i>Daily Profit</button>
                     <button class="tab" data-report="income-statement"><i data-lucide="receipt-text" class="icon"></i>Income Statement</button>
@@ -400,7 +394,6 @@
                     <select id="report-select" aria-label="Report type">
                         <option value="current-location">Current Location</option>
                         <option value="location-summary">Location Summary</option>
-                        <option value="payment-requests">Payment Requests</option>
                         <option value="finance-summary">Finance Summary</option>
                         <option value="daily-profit">Daily Profit</option>
                         <option value="income-statement">Income Statement</option>
@@ -444,7 +437,7 @@
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script>
         const API_BASE = '/api';
-        let currentMode = localStorage.getItem('fleetDashboardMode') || 'live';
+        let currentMode = 'live';
         let currentReport = 'daily-profit';
         if (window.location.hash === '#payment-requests') {
             currentReport = 'payment-requests';
@@ -489,9 +482,8 @@
 
         function updateModeBadge(mode, warning) {
             const badge = $('mode-badge');
-            badge.classList.toggle('demo', mode === 'demo');
             badge.classList.toggle('warning', Boolean(warning));
-            $('mode-label').textContent = warning || (mode === 'demo' ? 'Demo DB' : 'Live DB');
+            $('mode-label').textContent = warning || 'Live Odoo';
             $('mode-label').title = warning || '';
         }
 
@@ -505,23 +497,18 @@
         }
 
         async function loadReports() {
-            $('mode-select').value = currentMode;
             updateModeBadge(currentMode, 'Loading...');
             try {
-                dashboardData = await fetchJson(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(currentMode)}`);
-                if (currentMode === 'live') {
-                    const [currentLocation, currentLocationSummary, paymentRequests, financeSummary, dailyProfit, incomeStatement] = await Promise.all([
-                        fetchJson(`${API_BASE}/reports/current-location`),
-                        fetchJson(`${API_BASE}/reports/current-location-summary`),
-                        fetchJson(`${API_BASE}/reports/payment-requests`),
-                        fetchFinanceSummary(),
-                        fetchDailyProfit(),
-                        fetchJson(`${API_BASE}/reports/income-statement`),
-                    ]);
-                    reportData = { currentLocation, currentLocationSummary, paymentRequests, financeSummary, dailyProfit, incomeStatement };
-                } else {
-                    reportData = buildDemoReports(dashboardData);
-                }
+                dashboardData = await fetchJson(`${API_BASE}/dashboard/full?mode=live`);
+                const [currentLocation, currentLocationSummary, paymentRequests, financeSummary, dailyProfit, incomeStatement] = await Promise.all([
+                    fetchJson(`${API_BASE}/reports/current-location`),
+                    fetchJson(`${API_BASE}/reports/current-location-summary`),
+                    fetchJson(`${API_BASE}/reports/payment-requests`),
+                    fetchFinanceSummary(),
+                    fetchDailyProfit(),
+                    fetchJson(`${API_BASE}/reports/income-statement`),
+                ]);
+                reportData = { currentLocation, currentLocationSummary, paymentRequests, financeSummary, dailyProfit, incomeStatement };
                 updateModeBadge(dashboardData._mode || currentMode, dashboardData._warning || '');
                 renderAll();
             } catch (error) {
@@ -564,140 +551,10 @@
         }
 
         async function refreshDailyProfit() {
-            if (currentMode !== 'live') {
-                const trips = Array.isArray(dashboardData.recent_journeys) ? dashboardData.recent_journeys : [];
-                reportData.dailyProfit = buildDemoDailyProfit(trips);
-                renderAll();
-                return;
-            }
             updateModeBadge(currentMode, 'Loading report...');
             reportData.dailyProfit = await fetchDailyProfit();
             updateModeBadge(dashboardData._mode || currentMode, dashboardData._warning || '');
             renderAll();
-        }
-
-        function buildDemoReports(data) {
-            const trips = Array.isArray(data.recent_journeys) ? data.recent_journeys : [];
-            return {
-                currentLocation: trips.map((trip) => ({
-                    trip_id: trip.id,
-                    reference: trip.id,
-                    vehicle_plate: trip.vehicle_plate,
-                    driver_name: trip.driver_name,
-                    departure_name: trip.origin,
-                    destination_name: Array.isArray(trip.destinations) ? trip.destinations.join(', ') : '',
-                    current_location_name: Array.isArray(trip.destinations) ? trip.destinations[0] : '',
-                    current_location_note: trip.status,
-                    departure_date: trip.departure_date,
-                    arrival_date: trip.return_date,
-                    state: trip.status,
-                    current_location_days: 0,
-                })),
-                currentLocationSummary: buildDemoLocationSummary(trips),
-                paymentRequests: trips.map((trip) => ({
-                    id: trip.id,
-                    name: trip.id,
-                    trip_reference: trip.id,
-                    vehicle_plate: trip.vehicle_plate,
-                    state: trip.pending_expense_payment ? 'pending' : 'paid',
-                    date: trip.departure_date,
-                    total_amount: trip.payment_request_total || trip.total_expense,
-                })),
-                incomeStatement: {
-                    trip_count: trips.length,
-                    revenue_total: data.total_revenue || 0,
-                    expense_total: data.total_expense || 0,
-                    profit: data.total_profit || 0,
-                    receivable_count: data.payment_summary?.receivable_trip_count || trips.length,
-                    payment_request_count: data.payment_summary?.payment_request_trip_count || trips.length,
-                },
-                financeSummary: buildDemoFinanceSummary(trips),
-                dailyProfit: buildDemoDailyProfit(trips),
-            };
-        }
-
-        function buildDemoLocationSummary(trips) {
-            const grouped = trips.reduce((acc, trip) => {
-                const location = (Array.isArray(trip.destinations) ? trip.destinations[0] : trip.destination) || trip.current_location || 'Unknown';
-                if (!acc[location]) acc[location] = { location_name: location, vehicle_count: 0, vehicles: [] };
-                acc[location].vehicle_count += 1;
-                acc[location].vehicles.push({
-                    reference: trip.id,
-                    vehicle_plate: trip.vehicle_plate,
-                    driver_name: trip.driver_name,
-                    state: trip.status,
-                    destination_name: location,
-                    days: 0,
-                });
-                return acc;
-            }, {});
-            return { locations: Object.values(grouped), total_locations: Object.keys(grouped).length, total_vehicles: trips.length };
-        }
-
-        function buildDemoFinanceSummary(trips) {
-            const grouped = trips.reduce((acc, trip) => {
-                const key = String(trip.departure_date || new Date().toISOString()).slice(0, 10);
-                if (!acc[key]) acc[key] = { period_start: key, trip_count: 0, revenue_total: 0, expense_total: 0, profit: 0 };
-                acc[key].trip_count += 1;
-                acc[key].revenue_total += Number(trip.total_revenue || 0);
-                acc[key].expense_total += Number(trip.total_expense || 0);
-                acc[key].profit = acc[key].revenue_total - acc[key].expense_total;
-                return acc;
-            }, {});
-            const periods = Object.values(grouped);
-            return {
-                period: $('period-filter').value,
-                periods,
-                totals: {
-                    trip_count: periods.reduce((sum, row) => sum + row.trip_count, 0),
-                    revenue_total: periods.reduce((sum, row) => sum + row.revenue_total, 0),
-                    expense_total: periods.reduce((sum, row) => sum + row.expense_total, 0),
-                    profit: periods.reduce((sum, row) => sum + row.profit, 0),
-                },
-            };
-        }
-
-        function dailyProfitTotals(rows) {
-            return {
-                vehicle_count: rows.length,
-                rent_total: rows.reduce((sum, row) => sum + Number(row.rent_amount || 0), 0),
-                cost_total: rows.reduce((sum, row) => sum + Number(row.daily_total_cost || 0), 0),
-                revenue_total: rows.reduce((sum, row) => sum + Number(row.actual_daily_total_revenue || 0), 0),
-                net_profit_total: rows.reduce((sum, row) => sum + Number(row.actual_net_profit || 0), 0),
-                daily_net_profit_total: rows.reduce((sum, row) => sum + Number(row.daily_net_profit || 0), 0),
-            };
-        }
-
-        function buildDemoDailyProfit(trips) {
-            const requestedDate = $('from-date-filter').value || $('to-date-filter').value;
-            let selectedTrips = trips;
-            let reportDate = requestedDate;
-            if (requestedDate) {
-                selectedTrips = trips.filter((trip) => String(trip.departure_date || '').slice(0, 10) === requestedDate);
-            } else if (trips.length) {
-                reportDate = trips.map((trip) => String(trip.departure_date || '').slice(0, 10)).sort().reverse()[0];
-                selectedTrips = trips.filter((trip) => String(trip.departure_date || '').slice(0, 10) === reportDate);
-            }
-            const rows = selectedTrips.map((trip, index) => {
-                const revenue = Number(trip.total_revenue || 0);
-                const cost = Number(trip.total_expense || trip.payment_request_total || 0);
-                const profit = Math.max(0, revenue - cost);
-                const destination = Array.isArray(trip.destinations) ? trip.destinations.join(', ') : (trip.destination || 'Destination');
-                return {
-                    no: index + 1,
-                    driver_name: trip.driver_name || 'Unassigned',
-                    plate_number: trip.vehicle_plate || 'N/A',
-                    rent_amount: revenue,
-                    daily_total_cost: cost,
-                    actual_daily_total_revenue: revenue,
-                    actual_net_profit: profit,
-                    daily_net_profit: profit,
-                    remarks: `Vehicle rental revenue from ${trip.origin || 'TOP Factory'}-${destination}`,
-                    trip_id: trip.id,
-                    report_date: String(trip.departure_date || reportDate || '').slice(0, 10),
-                };
-            });
-            return { report_date: reportDate, rows, totals: dailyProfitTotals(rows) };
         }
 
         function renderKpis() {
@@ -1141,12 +998,6 @@
             if (!button) return;
             currentReport = button.dataset.report;
             renderAll();
-        });
-
-        $('mode-select').addEventListener('change', (event) => {
-            currentMode = event.target.value;
-            localStorage.setItem('fleetDashboardMode', currentMode);
-            loadReports();
         });
 
         $('theme-toggle').addEventListener('click', () => {

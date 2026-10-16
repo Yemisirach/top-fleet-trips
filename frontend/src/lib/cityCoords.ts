@@ -42,7 +42,7 @@ export const resolveCityCoords = (
     return city && (n.includes(city) || city.includes(n));
   });
   if (contains) return contains[1];
-  if (n.includes("topwater") || n.includes("top factory"))
+  if (n.includes("topwater") || n.includes("top factory") || n.includes("top factor"))
     return CITY_COORDS["Addis Ababa"];
   return null;
 };

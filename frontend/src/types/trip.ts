@@ -5,10 +5,19 @@ export interface TripLeg {
   destination?: string;
   departure_date?: string;
   arrival_date?: string;
+  create_date?: string;
+  write_date?: string;
   distance_km?: number;
   revenue?: number;
   expense?: number;
+  paid_amount?: number;
+  pending_payment?: number;
+  pending_expense_payment?: number;
+  payment_request_total?: number;
+  payment_request_count?: number;
+  payment_request_lines?: PaymentRequestLine[];
   status?: string;
+  synthetic?: boolean;
 }
 
 export interface Trip {
@@ -20,35 +29,51 @@ export interface Trip {
   vehicle_id?: string;
   vehicle_brand?: string;
   driver_name?: string;
+  supervisor_name?: string;
   customer_name?: string;
   origin?: string;
   destination?: string;
   destinations?: string[];
   journey_start?: string;
   journey_end?: string;
+  journey_started_at_factory?: boolean;
+  journey_ended_at_factory?: boolean;
   departure_date?: string;
   return_date?: string;
   arrival_date?: string;
   create_date?: string;
+  write_date?: string;
   total_revenue?: number;
   total_expense?: number;
   paid_amount?: number;
   pending_payment?: number;
   pending_expense_payment?: number;
   payment_request_total?: number;
+  payment_request_count?: number;
+  payment_request_lines?: PaymentRequestLine[];
   trip_count?: number;
   order_count?: number;
   order_receivable_count?: number;
   current_location?: string;
   current_location_note?: string;
   mayet_status?: string;
+  mayet_current_location?: string;
+  mayet_address?: string;
   mayet_captured_at?: string;
   mayet_latitude?: number;
   mayet_longitude?: number;
+  mayet_speed?: number;
+  mayet_mileage?: number;
+  mayet_fuel_level?: number;
+  mayet_url?: string;
   trips?: TripLeg[];
+  is_vehicle_location_only?: boolean;
 }
 
 export interface PaymentRequestLine {
+  request_id?: string | number;
+  request_name?: string;
+  request_state?: string;
   item?: string;
   description?: string;
   amount?: number;
@@ -63,13 +88,22 @@ export interface PaymentRequest {
   reference?: string;
   trip_id?: string | number;
   trip_reference?: string;
+  origin?: string;
+  destination?: string;
+  route_name?: string;
   vehicle_plate?: string;
   state?: string;
   date?: string;
   approved_on?: string;
   requester_name?: string;
+  customer_id?: string | number;
+  customer_name?: string;
   supervisor_name?: string;
+  driver_name?: string;
   total_amount?: number;
+  customer_receivable_total?: number;
+  customer_paid_amount?: number;
+  customer_pending_amount?: number;
   source?: string;
   request_text?: string;
   line_items?: PaymentRequestLine[];
@@ -77,9 +111,12 @@ export interface PaymentRequest {
 
 // ── Report types ─────────────────────────────────────
 export interface LocationRow {
+  vehicle_id?: string | number;
   trip_id?: string | number;
   reference?: string;
   vehicle_plate?: string;
+  vehicle_brand?: string;
+  supervisor_name?: string;
   driver_name?: string;
   departure_name?: string;
   destination_name?: string;
@@ -89,6 +126,7 @@ export interface LocationRow {
   arrival_date?: string;
   state?: string;
   current_location_days?: number;
+  days?: number;
 }
 
 export interface LocationSummaryGroup {
@@ -106,6 +144,8 @@ export interface LocationSummary {
 
 export interface FinancePeriod {
   period_start: string;
+  group_by?: string;
+  group_label?: string;
   trip_count: number;
   revenue_total: number;
   expense_total: number;
@@ -114,6 +154,7 @@ export interface FinancePeriod {
 
 export interface FinanceSummary {
   period: string;
+  group_by?: string;
   periods: FinancePeriod[];
   totals: {
     trip_count: number;
@@ -172,6 +213,12 @@ export interface GpsData {
   speed?: number;
   battery?: number;
   mileage?: number;
+  fuel?: number;
+  fuel_level?: number;
+  stop_duration?: string | number;
+  stop_duration_text?: string;
+  stopped_for?: string;
+  ignition?: string;
   captured_at?: string;
 }
 
@@ -191,4 +238,10 @@ export interface MayetVehicle {
   address?: string;
   captured_at?: string;
   speed?: number;
+  fuel?: number;
+  fuel_level?: number;
+  stop_duration?: string | number;
+  stop_duration_text?: string;
+  stopped_for?: string;
+  ignition?: string;
 }

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fleet Trips - Payment Requests</title>
+    <title>TOP Fleet - Payment Requests</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
@@ -102,8 +102,8 @@
     <div class="layout">
         <aside class="sidebar">
             <div class="brand">
-                <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="Fleet Trips"></div>
-                <div><div class="brand-title">Fleet Trips</div><div class="brand-subtitle">Payment Requests</div></div>
+                <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="TOP Fleet"></div>
+                <div><div class="brand-title">TOP Fleet</div><div class="brand-subtitle">Payment Requests</div></div>
             </div>
             <nav class="nav">
                 <a href="/"><i data-lucide="layout-dashboard" class="icon"></i>Dashboard</a>
@@ -120,7 +120,6 @@
                 <div class="controls">
                     <div class="mode-badge" id="mode-badge"><span class="mode-dot"></span><span id="mode-label">Live DB</span></div>
                     <div class="role-badge" id="role-badge">Checking role</div>
-                    <select id="mode-select" aria-label="Data source"><option value="live">Live DB</option><option value="demo">Demo DB</option></select>
                     <button class="btn" id="theme-toggle" type="button"><i data-lucide="moon" class="icon"></i><span id="theme-label">Dark</span></button>
                     <button class="btn" id="logout-btn" type="button"><i data-lucide="log-out" class="icon"></i>Logout</button>
                 </div>
@@ -174,7 +173,7 @@
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script>
         const API_BASE = '/api';
-        let currentMode = localStorage.getItem('fleetDashboardMode') || 'live';
+        let currentMode = 'live';
         let currentTheme = localStorage.getItem('fleetTheme') || 'light';
         let allPayments = [];
         let filteredPayments = [];
@@ -210,7 +209,6 @@
         }
 
         async function loadPayments() {
-            $('mode-select').value = currentMode;
             try {
                 const data = await fetchJson(`${API_BASE}/reports/payment-requests`);
                 allPayments = data || [];

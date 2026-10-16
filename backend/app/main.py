@@ -10,6 +10,23 @@ from app.routers import auth, catalog, dashboard, health, integrations, reports,
 
 app = FastAPI(title="Fleet Trips API", version="0.1.0")
 
+# ==================== CORS Configuration ====================
+from fastapi.middleware.cors import CORSMiddleware
+import os
+
+def get_allowed_origins():
+    origins_str = os.getenv("CORS_ORIGINS", "http://167.235.55.60:3003")
+    return [origin.strip() for origin in origins_str.split(",") if origin.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+# ============================================================
+
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -32,9 +49,6 @@ async def auth_middleware(request: Request, call_next):
 
 @app.exception_handler(asyncio.TimeoutError)
 async def timeout_exception_handler(request: Request, exc: asyncio.TimeoutError):
-    fallback = reports.fallback_response_for_path(request.url.path, request.query_params)
-    if fallback is not None:
-        return JSONResponse(fallback)
     return JSONResponse({"detail": "Live Odoo DB timed out."}, status_code=503)
 
 # Serve static files
@@ -65,9 +79,11 @@ async def report_page():
     with open(report_path, "r") as f:
         return f.read()
 
-@app.get("/payments.html")
+@app.get("/payments.html", response_class=HTMLResponse)
 async def payments_page():
-    return RedirectResponse(url="/report.html#payment-requests", status_code=302)
+    payments_path = os.path.join(static_dir, "payments.html")
+    with open(payments_path, "r") as f:
+        return f.read()
 
 @app.get("/map.html", response_class=HTMLResponse)
 async def map_page():

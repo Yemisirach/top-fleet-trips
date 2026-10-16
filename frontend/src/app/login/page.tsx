@@ -36,9 +36,9 @@ export default function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-logo">
-          <img src="/static/fleet-trips-logo.svg" alt="Fleet Trips" />
+          <img src="/top-logo-full.jpg" alt="TOP Fleet" />
           <div>
-            <div className="login-title">Fleet Trips</div>
+            <div className="login-title">TOP Fleet</div>
             <div className="login-sub">Topwater Ethiopia — Fleet Management</div>
           </div>
         </div>

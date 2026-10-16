@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fleet Trips - Trip Detail</title>
+    <title>TOP Fleet - Trip Detail</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
@@ -96,7 +96,7 @@
 <body>
     <header class="topbar">
         <div class="brand">
-            <img src="/static/fleet-trips-logo.svg" alt="Fleet Trips">
+            <img src="/static/fleet-trips-logo.svg" alt="TOP Fleet">
             <div>
                 <div class="title" id="page-title">Trip Detail</div>
                 <div class="subtitle" id="page-subtitle">DB location and Mayet GPS comparison</div>
@@ -172,10 +172,9 @@
 
         async function loadTrip() {
             if (!tripId) return showEmpty('No trip id provided.');
-            const mode = localStorage.getItem('fleetDashboardMode') || 'live';
             let trip = null;
             try {
-                const data = await fetchJson(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(mode)}`);
+                const data = await fetchJson(`${API_BASE}/dashboard/full?mode=live`);
                 trip = (data.recent_journeys || []).find((item) => String(item.id) === String(tripId));
             } catch (error) {}
             if (!trip) {
@@ -185,7 +184,7 @@
             // Prefer GPS data already attached by dashboard, otherwise fetch fresh
             let gpsPayload = null;
             if (trip.mayet_status || trip.mayet_captured_at) {
-                gpsPayload = { gps: { location: trip.mayet_status, captured_at: trip.mayet_captured_at, latitude: trip.mayet_latitude, longitude: trip.mayet_longitude } };
+                gpsPayload = { gps: { location: trip.mayet_current_location || trip.mayet_address, address: trip.mayet_address || trip.mayet_current_location, captured_at: trip.mayet_captured_at, latitude: trip.mayet_latitude, longitude: trip.mayet_longitude } };
             } else {
                 gpsPayload = await loadGps(trip.vehicle_plate || trip.vehicle_id || trip.id);
             }
@@ -200,9 +199,9 @@
         function renderTrip(trip, gpsPayload) {
             const state = normalizeState(trip.status || trip.state);
             const destinations = Array.isArray(trip.destinations) ? trip.destinations : [];
-            const journeyStart = trip.journey_start || 'TOP Factory';
-            const journeyEnd = trip.journey_end || 'TOP Factory';
-            const route = `${journeyStart} -> ${destinations[0] || trip.destination || 'DB destination pending'} -> ${journeyEnd}`;
+            const journeyStart = trip.journey_start || 'Origin not set';
+            const journeyEnd = trip.journey_end || 'Return location not set';
+            const route = `${journeyStart} -> ${destinations[0] || trip.destination || 'Destination not set'} -> ${journeyEnd}`;
             $('page-title').textContent = trip.vehicle_plate || trip.id;
             $('trip-heading').textContent = trip.vehicle_plate || trip.id;
             $('trip-route').textContent = route;
@@ -217,7 +216,7 @@
                 ['Pending', money(trip.pending_payment), 'amber'],
                 ['Journey Expense', money(expense), 'red'],
                 ['Profit', money(revenue - expense), revenue - expense >= 0 ? 'green' : 'red'],
-                ['Trips Inside', trip.trip_count || (Array.isArray(trip.trips) ? trip.trips.length : 1), ''],
+                ['Trips', trip.trip_count || (Array.isArray(trip.trips) ? trip.trips.length : 1), ''],
                 ['Return To', journeyEnd, ''],
             ].map(([label, value, tone]) => `
                 <div class="metric"><div class="metric-label">${clean(label)}</div><div class="metric-value ${tone}">${clean(value)}</div></div>
@@ -233,15 +232,15 @@
             if (!legs.length) {
                 const destination = Array.isArray(trip.destinations) && trip.destinations.length ? trip.destinations[0] : trip.destination;
                 return [
-                    { title: trip.journey_start || trip.origin || 'TOP Factory', meta: trip.departure_date || 'Not set', note: `Journey opened toward ${destination || 'destination pending'}` },
-                    { title: trip.journey_end || 'TOP Factory', meta: trip.return_date || 'Pending', note: `Journey ends when vehicle returns to ${trip.journey_end || 'TOP Factory'}` },
+                    { title: trip.journey_start || trip.origin || 'Origin not set', meta: trip.departure_date || 'Not set', note: `Journey opened toward ${destination || 'destination not set'}` },
+                    { title: trip.journey_end || 'Return location not set', meta: trip.return_date || 'Pending', note: `Journey ends when vehicle returns to ${trip.journey_end || 'return location not set'}` },
                 ];
             }
             return legs.flatMap((leg) => {
-                const entries = [{ title: leg.origin || trip.origin || 'TOP Factory', meta: leg.departure_date || trip.departure_date || 'Not set', note: `Trip leg toward ${leg.destination || 'destination'} · Revenue ${money(leg.revenue || 0)} · Expense ${money(leg.expense || 0)}` }];
+                const entries = [{ title: leg.origin || trip.origin || 'Origin not set', meta: leg.departure_date || trip.departure_date || 'Not set', note: `Trip leg toward ${leg.destination || 'destination not set'} · Revenue ${money(leg.revenue || 0)} · Expense ${money(leg.expense || 0)}` }];
                 if (leg.arrival_date) entries.push({ title: leg.destination || 'Destination', meta: leg.arrival_date, note: `Arrived after ${leg.distance_km || 0} km` });
                 return entries;
-            }).concat([{ title: trip.journey_end || 'TOP Factory', meta: trip.return_date || 'Pending', note: `Return to ${trip.journey_end || 'TOP Factory'}` }]);
+            }).concat([{ title: trip.journey_end || 'Return location not set', meta: trip.return_date || 'Pending', note: `Return to ${trip.journey_end || 'return location not set'}` }]);
         }
 
         function renderTimeline(trip) {
@@ -271,7 +270,7 @@
             const legs = Array.isArray(trip.trips) ? trip.trips : [];
             $('route-summary').innerHTML = legs.length ? legs.map((leg) => `
                 <div class="compare-row"><div class="compare-label">Trip ${clean(leg.id || '')}</div><div>${clean(leg.origin || 'Origin')} -> ${clean(leg.destination || 'Destination')} · Revenue ${money(leg.revenue || 0)} · Expense ${money(leg.expense || 0)}</div></div>
-            `).join('') : `<div class="compare-row"><div class="compare-label">Journey</div><div>${clean(trip.journey_start || trip.origin || 'TOP Factory')} -> ${clean(Array.isArray(trip.destinations) ? trip.destinations.join(', ') : trip.destination || 'Destination pending')} -> ${clean(trip.journey_end || 'TOP Factory')}</div></div>`;
+            `).join('') : `<div class="compare-row"><div class="compare-label">Journey</div><div>${clean(trip.journey_start || trip.origin || 'Origin not set')} -> ${clean(Array.isArray(trip.destinations) ? trip.destinations.join(', ') : trip.destination || 'Destination not set')} -> ${clean(trip.journey_end || 'Return location not set')}</div></div>`;
         }
 
         function showEmpty(message) {

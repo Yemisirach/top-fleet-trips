@@ -1,10 +1,10 @@
-"""Dashboard router with real Odoo snapshot data and fast mock-data mode."""
+"""Dashboard router backed by live Odoo data."""
 
 import asyncio
 import json
 import re
-from datetime import datetime, timezone
-from pathlib import Path
+import urllib.parse
+import urllib.request
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,8 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from app.core.database import get_session
+from app.core.server_cache import CACHE_TTL_SECONDS, cache_get, cache_get_stale, cache_set
 from app.core.settings import get_settings
-from app.mock_data import mock_db, MockDatabase
+from app.services.journey_assembly import (
+    build_journeys,
+    ensure_all_vehicle_current_locations,
+    fetch_trip_rows,
+    fetch_vehicle_location_rows,
+)
 
 try:
     import redis as redis_client
@@ -22,10 +28,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 
 router = APIRouter()
 settings = get_settings()
-
-
-def _get_mock_dashboard() -> dict:
-    return {**mock_db.get_full_dashboard(), "_mode": "demo", "_source": "mock"}
+_reverse_geocode_cache: dict[str, str] = {}
 
 
 def _as_float(value) -> float:
@@ -40,76 +43,208 @@ def _gps_coord(gps: dict, *keys: str):
     return None
 
 
+def _normalize_trip_state(value) -> str:
+    raw = re.sub(r"\s+", " ", str(value or "")).strip().lower()
+    return {
+        "planned": "available",
+        "in_progress": "dispatched",
+        "in progress": "dispatched",
+        "completed": "done",
+        "cancel": "cancelled",
+        "canceled": "cancelled",
+    }.get(raw, raw or "draft")
+
+
+def _active_vehicle_conflicts(journeys: list[dict]) -> list[dict]:
+    """Detect vehicles assigned to multiple drivers (one vehicle = one driver rule)."""
+    active_states = {"available", "assigned", "dispatched", "started", "draft"}
+    by_vehicle: dict[str, dict] = {}
+
+    for journey in journeys:
+        vehicle = str(journey.get("vehicle_plate") or journey.get("vehicle_id") or "").strip()
+        driver = str(journey.get("driver_name") or "").strip()
+
+        if not vehicle or not driver:
+            continue
+        if driver.lower() in {"unassigned", "n/a"}:
+            continue
+        if _normalize_trip_state(journey.get("status") or journey.get("state")) not in active_states:
+            continue
+
+        row = by_vehicle.setdefault(vehicle, {
+            "vehicle_plate": vehicle,
+            "drivers": set(),
+            "journeys": []
+        })
+        row["drivers"].add(driver)
+        row["journeys"].append({
+            "id": journey.get("id"),
+            "driver_name": driver,
+            "status": journey.get("status") or journey.get("state"),
+            "destination": journey.get("destination"),
+            "departure_date": journey.get("departure_date"),
+        })
+
+    conflicts = []
+    for row in by_vehicle.values():
+        if len(row["drivers"]) <= 1:
+            continue
+        conflicts.append({
+            "vehicle_plate": row["vehicle_plate"],
+            "driver_count": len(row["drivers"]),
+            "drivers": sorted(row["drivers"]),
+            "journey_count": len(row["journeys"]),
+            "journeys": row["journeys"],
+        })
+    return sorted(conflicts, key=lambda item: (-item["driver_count"], item["vehicle_plate"]))
+
+
+def _active_driver_conflicts(journeys: list[dict]) -> list[dict]:
+    active_states = {"available", "assigned", "dispatched", "started", "draft"}
+    by_driver: dict[str, dict] = {}
+    for journey in journeys:
+        driver = str(journey.get("driver_name") or "").strip()
+        if not driver or driver.lower() in {"unassigned", "n/a"}:
+            continue
+        if _normalize_trip_state(journey.get("status") or journey.get("state")) not in active_states:
+            continue
+        row = by_driver.setdefault(driver, {"driver_name": driver, "vehicles": set(), "journeys": []})
+        row["vehicles"].add(str(journey.get("vehicle_plate") or journey.get("vehicle_id") or "N/A"))
+        row["journeys"].append({
+            "id": journey.get("id"),
+            "vehicle_plate": journey.get("vehicle_plate"),
+            "status": journey.get("status") or journey.get("state"),
+            "destination": journey.get("destination"),
+            "departure_date": journey.get("departure_date"),
+        })
+    conflicts = []
+    for row in by_driver.values():
+        if len(row["vehicles"]) <= 1:
+            continue
+        conflicts.append({
+            "driver_name": row["driver_name"],
+            "vehicle_count": len(row["vehicles"]),
+            "vehicles": sorted(row["vehicles"]),
+            "journey_count": len(row["journeys"]),
+            "journeys": row["journeys"],
+        })
+    return sorted(conflicts, key=lambda item: (-item["vehicle_count"], item["driver_name"]))
+
+
+async def _fetch_active_driver_conflicts(db: AsyncSession) -> list[dict]:
+    result = await db.execute(text("""
+        SELECT
+            driver.name AS driver_name,
+            COUNT(DISTINCT t.vehicle_id) AS vehicle_count,
+            COUNT(*) AS journey_count,
+            array_agg(DISTINCT COALESCE(v.license_plate, t.vehicle_id::text) ORDER BY COALESCE(v.license_plate, t.vehicle_id::text)) AS vehicles,
+            jsonb_agg(
+                jsonb_build_object(
+                    'id', t.id,
+                    'vehicle_plate', COALESCE(v.license_plate, t.vehicle_id::text),
+                    'status', COALESCE(t.state, 'draft'),
+                    'destination', destination.name,
+                    'departure_date', t.departure_date
+                )
+                ORDER BY COALESCE(t.departure_date, t.create_date) DESC NULLS LAST, t.id DESC
+            ) AS journeys
+        FROM trip_trip t
+        JOIN hr_employee driver ON driver.id = t.driver_id
+        LEFT JOIN fleet_vehicle v ON v.id = t.vehicle_id
+        LEFT JOIN trip_location destination ON destination.id = t.destination_id
+        WHERE LOWER(COALESCE(t.state, '')) IN (
+            'available', 'assigned', 'dispatched', 'planned', 'in_progress', 'in progress', 'draft'
+        )
+        GROUP BY driver.name
+        HAVING COUNT(DISTINCT t.vehicle_id) > 1
+        ORDER BY vehicle_count DESC, journey_count DESC, driver.name
+        LIMIT 20
+    """))
+    return [dict(row._mapping) for row in result.fetchall()]
+
+
+def _reverse_geocode_sync(latitude, longitude) -> Optional[str]:
+    try:
+        lat = float(latitude)
+        lon = float(longitude)
+    except (TypeError, ValueError):
+        return None
+
+    key = f"{lat:.5f},{lon:.5f}"
+    if key in _reverse_geocode_cache:
+        return _reverse_geocode_cache[key]
+
+    query = urllib.parse.urlencode({
+        "format": "jsonv2",
+        "lat": f"{lat:.6f}",
+        "lon": f"{lon:.6f}",
+        "zoom": "16",
+        "addressdetails": "1",
+    })
+    request = urllib.request.Request(
+        f"https://nominatim.openstreetmap.org/reverse?{query}",
+        headers={"User-Agent": "FleetTrips/1.0 (gps-location-display)"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+
+    address = payload.get("display_name")
+    if isinstance(address, str) and address.strip():
+        _reverse_geocode_cache[key] = address.strip()
+        return _reverse_geocode_cache[key]
+    return None
+
+
+def _is_coordinate_text(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    return bool(re.fullmatch(r"\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*", str(value)))
+
+
+def _is_mayet_device_status(value: Optional[str]) -> bool:
+    raw = str(value or "").strip().lower()
+    return raw in {"offline", "online", "ack", "idle", "moving", "stopped", "status pending"}
+
+
+def _gps_location_display(gps: Optional[dict]) -> Optional[str]:
+    if not gps:
+        return None
+    address = str(gps.get("address") or "").strip()
+    if address and not _is_coordinate_text(address) and not _is_mayet_device_status(address):
+        return address
+    location = str(gps.get("location") or "").strip()
+    if location and not _is_coordinate_text(location) and not _is_mayet_device_status(location):
+        return location
+    latitude = _gps_coord(gps, "latitude", "lat")
+    longitude = _gps_coord(gps, "longitude", "lng", "lon")
+    if latitude is not None and longitude is not None:
+        return f"{latitude}, {longitude}"
+    return None
+
+
+async def _enrich_gps_address(gps: Optional[dict]) -> Optional[dict]:
+    if not gps:
+        return gps
+    enriched = dict(gps)
+    if enriched.get("address") and not _is_coordinate_text(enriched.get("address")):
+        return enriched
+    latitude = _gps_coord(enriched, "latitude", "lat")
+    longitude = _gps_coord(enriched, "longitude", "lng", "lon")
+    address = await asyncio.to_thread(_reverse_geocode_sync, latitude, longitude)
+    if address:
+        enriched["address"] = address
+    return enriched
+
+
 def _plate_match_key(value: Optional[str]) -> tuple[str, str]:
     raw = (value or "").upper().replace(" ", "-")
     numbers = re.findall(r"\d+", raw)
     primary_numbers = [part for part in numbers if len(part) >= 4]
     digits = (primary_numbers[0] if primary_numbers else (numbers[0] if numbers else "")).lstrip("0")
     return "", digits
-
-
-def _load_live_snapshot() -> Optional[dict]:
-    if redis_client is not None:
-        try:
-            redis = redis_client.Redis.from_url(settings.redis_url, decode_responses=True)
-            raw_snapshot = redis.get("fleet:snapshot")
-        except Exception:
-            raw_snapshot = None
-
-        if raw_snapshot:
-            snapshot = _parse_live_snapshot(raw_snapshot)
-            if snapshot is not None:
-                return snapshot
-
-    path = Path(settings.snapshot_path)
-    if not path.exists():
-        return None
-
-    try:
-        return _parse_live_snapshot(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _parse_live_snapshot(raw_snapshot: str) -> Optional[dict]:
-    try:
-        snapshot = json.loads(raw_snapshot)
-    except json.JSONDecodeError:
-        return None
-
-    if snapshot.get("mode") != "live":
-        return None
-
-    data = snapshot.get("data")
-    if not isinstance(data, dict):
-        return None
-
-    return {
-        **data,
-        "_mode": "live",
-        "_source": "live_snapshot",
-        "_snapshot_generated_at": snapshot.get("generated_at"),
-    }
-
-
-def _write_live_snapshot(data: dict) -> None:
-    snapshot = {
-        "mode": "live",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "data": data,
-    }
-    raw_snapshot = json.dumps(snapshot, default=str)
-
-    if redis_client is not None:
-        try:
-            redis = redis_client.Redis.from_url(settings.redis_url, decode_responses=True)
-            redis.set("fleet:snapshot", raw_snapshot, ex=300)
-        except Exception:
-            pass
-
-    path = Path(settings.snapshot_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(raw_snapshot)
 
 
 def _read_gps_from_redis(vehicle_ref: str) -> Optional[dict]:
@@ -143,6 +278,21 @@ def _read_gps_from_redis(vehicle_ref: str) -> Optional[dict]:
             ]
             if len(matches) == 1:
                 return matches[0] | {"_source": "fleet:mayet:vehicles"}
+
+        target_number = _plate_match_key(ref)[1]
+        if target_number:
+            for key in redis.scan_iter("fleet:gps:*", count=200):
+                if key == "fleet:gps:last_check":
+                    continue
+                cached_number = _plate_match_key(str(key).split("fleet:gps:", 1)[-1])[1]
+                if cached_number != target_number:
+                    continue
+                raw = redis.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    return data | {"_source": key}
     except Exception:
         return None
     return None
@@ -162,20 +312,82 @@ def _read_mayet_vehicle_catalog() -> Optional[dict]:
         return None
 
 
+async def _resolve_vehicle_ref(db: AsyncSession, vehicle_ref: str) -> Optional[str]:
+    ref = str(vehicle_ref or "").strip()
+    if not ref:
+        return None
+    vehicle_part = ref.split(":", 1)[0]
+    plate_number = _plate_match_key(ref)[1]
+    result = await db.execute(text("""
+        SELECT license_plate
+        FROM (
+            SELECT v.license_plate, 0 AS priority
+            FROM fleet_vehicle v
+            WHERE CAST(v.id AS text) IN (:vehicle_ref, :vehicle_part)
+               OR COALESCE(v.license_plate, '') ILIKE :plate_like
+               OR regexp_replace(COALESCE(v.license_plate, ''), '[^0-9]', '', 'g') LIKE :number_like
+
+            UNION ALL
+
+            SELECT v.license_plate, 1 AS priority
+            FROM trip_trip t
+            JOIN fleet_vehicle v ON t.vehicle_id = v.id
+            WHERE CAST(t.id AS text) = :vehicle_ref
+        ) matches
+        WHERE COALESCE(license_plate, '') <> ''
+        ORDER BY priority
+        LIMIT 1
+    """), {
+        "vehicle_ref": ref,
+        "vehicle_part": vehicle_part,
+        "plate_like": f"%{ref}%",
+        "number_like": f"%{plate_number}%" if plate_number else "%",
+    })
+    row = result.fetchone()
+    return row.license_plate if row else None
+
+
 @router.get("/gps/{vehicle_ref}")
-async def get_vehicle_gps(vehicle_ref: str) -> dict:
+async def get_vehicle_gps(
+    vehicle_ref: str,
+    db: AsyncSession = Depends(get_session),
+) -> dict:
     """Return the latest GPS position cached by the Mayet worker."""
-    gps = _read_gps_from_redis(vehicle_ref)
-    if gps:
+    direct_gps = _read_gps_from_redis(vehicle_ref)
+    if direct_gps:
         return {
             "configured": True,
             "vehicle_ref": vehicle_ref,
+            "resolved_ref": vehicle_ref,
             "mayet_url": settings.mayet_url,
-            "gps": gps,
+            "gps": await _enrich_gps_address(direct_gps),
         }
+
+    resolved_ref = None
+    try:
+        resolved_ref = await asyncio.wait_for(_resolve_vehicle_ref(db, vehicle_ref), timeout=3)
+    except Exception:
+        resolved_ref = None
+
+    candidates = []
+    for candidate in (resolved_ref, vehicle_ref):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        gps = _read_gps_from_redis(candidate)
+        if gps:
+            return {
+                "configured": True,
+                "vehicle_ref": vehicle_ref,
+                "resolved_ref": candidate,
+                "mayet_url": settings.mayet_url,
+                "gps": await _enrich_gps_address(gps),
+            }
     return {
         "configured": bool(settings.mayet_username and settings.mayet_password),
         "vehicle_ref": vehicle_ref,
+        "resolved_ref": resolved_ref,
         "mayet_url": settings.mayet_url,
         "gps": None,
         "message": "No cached Mayet GPS position found for this vehicle.",
@@ -274,49 +486,44 @@ async def get_snapshot(db: AsyncSession = Depends(get_session)) -> dict:
 
 @router.get("/full")
 async def get_full_dashboard(
-    mode: str = Query("live", description="'live' for real Odoo DB, 'demo' for mock data"),
+    mode: str = Query("live", description="Only 'live' is supported; data comes from Odoo."),
+    refresh: bool = Query(False),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Return full dashboard data in a single call. Fast in demo mode."""
+    """Return full dashboard data from Odoo in a single call."""
 
-    if mode == "live":
-        try:
-            data = await asyncio.wait_for(
-                _get_live_dashboard(db),
-                timeout=settings.db_query_timeout_seconds,
-            )
-            try:
-                _write_live_snapshot(data)
-            except OSError:
-                pass
-            return data
-        except asyncio.TimeoutError:
-            snapshot = _load_live_snapshot()
-            if snapshot is not None:
-                return {
-                    **snapshot,
-                    "_warning": f"Live DB timed out after {settings.db_query_timeout_seconds:g}s. Showing cached live snapshot.",
-                }
-            raise HTTPException(
-                status_code=503,
-                detail=f"Live DB timed out after {settings.db_query_timeout_seconds:g}s and no live snapshot is available.",
-            )
-        except Exception as e:
-            snapshot = _load_live_snapshot()
-            if snapshot is not None:
-                return {
-                    **snapshot,
-                    "_warning": f"Live DB unavailable ({str(e)[:80]}). Showing cached live snapshot.",
-                }
-            raise HTTPException(
-                status_code=503,
-                detail=f"Live DB unavailable ({str(e)[:120]}) and no live snapshot is available.",
-            )
+    if mode != "live":
+        raise HTTPException(status_code=400, detail="Only live Odoo mode is supported.")
 
-    if mode == "demo":
-        return _get_mock_dashboard()
+    cache_key = "fleet:dashboard:full"
+    if not refresh:
+        cached = cache_get(cache_key)
+        if cached:
+            return cached
 
-    raise HTTPException(status_code=400, detail="mode must be 'live' or 'demo'")
+    try:
+        dashboard = await asyncio.wait_for(
+            _get_live_dashboard(db),
+            timeout=settings.db_query_timeout_seconds,
+        )
+
+        cache_set(cache_key, dashboard, CACHE_TTL_SECONDS)
+
+        return dashboard
+    except asyncio.TimeoutError:
+        stale = cache_get_stale(cache_key)
+        if stale:
+            stale["_cache_warning"] = f"Live Odoo DB timed out after {settings.db_query_timeout_seconds:g}s. Showing last server cache."
+            return stale
+        reason = f"Live Odoo DB timed out after {settings.db_query_timeout_seconds:g}s."
+        raise HTTPException(status_code=503, detail=reason)
+    except Exception as e:
+        stale = cache_get_stale(cache_key)
+        if stale:
+            stale["_cache_warning"] = f"Live Odoo DB unavailable. Showing last server cache."
+            return stale
+        reason = f"Live Odoo DB unavailable: {str(e)[:160]}"
+        raise HTTPException(status_code=503, detail=reason)
 
 
 async def _get_live_dashboard(db: AsyncSession) -> dict:
@@ -326,23 +533,14 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
     brand_result = await db.execute(text("""
         SELECT b.name as brand, COUNT(*) as count
         FROM fleet_vehicle v
-        JOIN fleet_vehicle_model m ON v.model_id = m.id
-        JOIN fleet_vehicle_model_brand b ON m.brand_id = b.id
+        LEFT JOIN fleet_vehicle_model m ON v.model_id = m.id
+        LEFT JOIN fleet_vehicle_model_brand b ON m.brand_id = b.id
         WHERE v.active = true
         GROUP BY b.name
         ORDER BY count DESC
         LIMIT 10
     """))
     brands = [{"brand": row.brand, "count": row.count} for row in brand_result.fetchall()]
-
-    # Trip counts by state
-    trip_state_result = await db.execute(text("""
-        SELECT state, COUNT(*) as count
-        FROM trip_trip
-        GROUP BY state
-        ORDER BY count DESC
-    """))
-    trip_states = [{"state": row.state, "count": row.count} for row in trip_state_result.fetchall()]
 
     payment_summary_result = await db.execute(text("""
         WITH receivables AS (
@@ -410,164 +608,59 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
         "payment_request_trip_count": payment_summary_row.payment_request_trip_count or 0,
     }
 
-    # Recent trips
-    recent_trips_result = await db.execute(text("""
-        WITH receivables AS (
-            SELECT
-                trip_id,
-                COALESCE(SUM(amount_due), 0) AS total_receivable,
-                COALESCE(SUM(
-                    CASE
-                        WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                             OR COALESCE(payment_reference, '') <> ''
-                        THEN amount_due
-                        ELSE 0
-                    END
-                ), 0) AS paid_amount,
-                COALESCE(SUM(
-                    CASE
-                        WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                             OR COALESCE(payment_reference, '') <> ''
-                        THEN 0
-                        ELSE amount_due
-                    END
-                ), 0) AS pending_amount,
-                COUNT(*) AS receivable_count,
-                MAX(customer_name) AS customer_name
-            FROM trip_receivable
-            GROUP BY trip_id
-        ),
-        payment_requests AS (
-            SELECT
-                pr.trip_id,
-                COALESCE(SUM(COALESCE(prl.total, prl.amount * COALESCE(prl.quantity, 1), pr.amount_birr, pr.amount, 0)), 0) AS requested_amount,
-                COALESCE(SUM(
-                    CASE
-                        WHEN LOWER(COALESCE(pr.state, '')) IN ('paid', 'done', 'posted')
-                        THEN COALESCE(prl.total, prl.amount * COALESCE(prl.quantity, 1), pr.amount_birr, pr.amount, 0)
-                        ELSE 0
-                    END
-                ), 0) AS paid_expense_amount,
-                COALESCE(SUM(
-                    CASE
-                        WHEN LOWER(COALESCE(pr.state, '')) IN ('paid', 'done', 'posted')
-                        THEN 0
-                        ELSE COALESCE(prl.total, prl.amount * COALESCE(prl.quantity, 1), pr.amount_birr, pr.amount, 0)
-                    END
-                ), 0) AS pending_expense_amount,
-                COUNT(DISTINCT pr.id) AS payment_request_count
-            FROM payment_request pr
-            LEFT JOIN payment_request_line prl ON prl.payment_request_id = pr.id
-            WHERE COALESCE(pr.is_trip_payment, false) = true
-            GROUP BY pr.trip_id
-        ),
-        trip_expenses AS (
-            SELECT
-                trip_id,
-                COALESCE(SUM(COALESCE(total_expense, amount * COALESCE(quantity, 1), 0)), 0) AS total_expense
-            FROM trip_expense_line
-            GROUP BY trip_id
-        )
-        SELECT t.id, t.name, t.state, t.departure_date,
-               v.license_plate, m.name as model, b.name as brand,
-               driver.name as driver_name,
-               departure.name as departure_name,
-               destination.name as destination_name,
-               COALESCE(r.customer_name, 'Customer') as customer_name,
-               COALESCE(r.total_receivable, 0) as total_receivable,
-               COALESCE(r.paid_amount, 0) as paid_amount,
-               COALESCE(r.pending_amount, 0) as pending_amount,
-               COALESCE(te.total_expense, pr.requested_amount, 0) as total_expense,
-               COALESCE(pr.requested_amount, 0) as payment_request_total,
-               COALESCE(pr.paid_expense_amount, 0) as paid_expense_amount,
-               COALESCE(pr.pending_expense_amount, 0) as pending_expense_amount,
-               COALESCE(r.receivable_count, 0) as order_receivable_count,
-               COALESCE(pr.payment_request_count, 0) as payment_request_count
-        FROM trip_trip t
-        LEFT JOIN fleet_vehicle v ON t.vehicle_id = v.id
-        LEFT JOIN fleet_vehicle_model m ON v.model_id = m.id
-        LEFT JOIN fleet_vehicle_model_brand b ON m.brand_id = b.id
-        LEFT JOIN hr_employee driver ON t.driver_id = driver.id
-        LEFT JOIN trip_location departure ON t.departure_id = departure.id
-        LEFT JOIN trip_location destination ON t.destination_id = destination.id
-        LEFT JOIN receivables r ON r.trip_id = t.id
-        LEFT JOIN payment_requests pr ON pr.trip_id = t.id
-        LEFT JOIN trip_expenses te ON te.trip_id = t.id
-        ORDER BY t.create_date DESC
-        LIMIT 50
+    status_result = await db.execute(text("""
+        SELECT
+            CASE
+                WHEN LOWER(COALESCE(state, '')) = 'planned' THEN 'available'
+                WHEN LOWER(COALESCE(state, '')) IN ('in_progress', 'in progress') THEN 'dispatched'
+                WHEN LOWER(COALESCE(state, '')) = 'completed' THEN 'done'
+                WHEN LOWER(COALESCE(state, '')) IN ('cancel', 'canceled') THEN 'cancelled'
+                ELSE COALESCE(NULLIF(LOWER(state), ''), 'draft')
+            END AS state,
+            COUNT(*) AS count
+        FROM trip_trip
+        GROUP BY 1
     """))
-    recent_journeys = []
-    for row in recent_trips_result.fetchall():
-        origin = row.departure_name or "TOP Factory"
-        destination = row.destination_name or row.name or "Destination pending"
-        revenue = _as_float(row.total_receivable)
-        expense = _as_float(row.total_expense)
-        departure_date = str(row.departure_date) if row.departure_date else None
-        recent_journeys.append({
-            "id": row.id,
-            "vehicle_plate": row.license_plate,
-            "vehicle_brand": row.brand or row.model,
-            "driver_name": row.driver_name or "Unassigned",
-            "customer_name": row.customer_name,
-            "origin": origin,
-            "journey_start": "TOP Factory",
-            "journey_end": "TOP Factory",
-            "destinations": [destination] if destination else [],
-            "status": row.state,
-            "departure_date": departure_date,
-            "total_revenue": revenue,
-            "total_expense": expense,
-            "paid_amount": _as_float(row.paid_amount),
-            "pending_payment": _as_float(row.pending_amount),
-            "payment_request_total": _as_float(row.payment_request_total),
-            "paid_expense_amount": _as_float(row.paid_expense_amount),
-            "pending_expense_payment": _as_float(row.pending_expense_amount),
-            "order_receivable_count": row.order_receivable_count or 0,
-            "payment_request_count": row.payment_request_count or 0,
-            "order_count": max(row.order_receivable_count or 0, row.payment_request_count or 0, 1),
-            "trip_count": 1,
-            "trips": [
-                {
-                    "id": row.id,
-                    "name": row.name,
-                    "origin": origin,
-                    "destination": destination,
-                    "departure_date": departure_date,
-                    "arrival_date": None,
-                    "status": row.state,
-                    "revenue": revenue,
-                    "expense": expense,
-                    "paid_amount": _as_float(row.paid_amount),
-                    "pending_payment": _as_float(row.pending_amount),
-                    "payment_request_total": _as_float(row.payment_request_total),
-                }
-            ],
-        })
-    for journey in recent_journeys:
-        gps = _read_gps_from_redis(str(journey.get("vehicle_plate") or ""))
-        if gps:
-            journey["mayet_status"] = gps.get("location") or gps.get("status")
-            journey["mayet_captured_at"] = gps.get("captured_at")
-            journey["mayet_latitude"] = _gps_coord(gps, "latitude", "lat")
-            journey["mayet_longitude"] = _gps_coord(gps, "longitude", "lng", "lon")
+    journeys_by_status = [{"state": row.state, "count": row.count} for row in status_result.fetchall()]
+    total_journey_count = sum(row["count"] for row in journeys_by_status)
+    active_journey_count = sum(
+        row["count"]
+        for row in journeys_by_status
+        if row["state"] not in {"done", "cancelled", "cancel"}
+    )
+
+    trip_rows = await fetch_trip_rows(db, limit=500)
+    vehicle_location_rows = await fetch_vehicle_location_rows(db, limit=1000)
+    recent_journeys = ensure_all_vehicle_current_locations(
+        build_journeys(trip_rows),
+        vehicle_location_rows,
+    )
+    supervised_vehicle_keys = {
+        str(row.get("vehicle_id") or row.get("vehicle_plate") or "").strip()
+        for row in vehicle_location_rows
+        if row.get("supervisor_name") and (row.get("vehicle_id") or row.get("vehicle_plate"))
+    }
+    if supervised_vehicle_keys:
+        recent_journeys = [
+            journey for journey in recent_journeys
+            if str(journey.get("vehicle_id") or journey.get("vehicle_plate") or "").strip() in supervised_vehicle_keys
+        ]
+    driver_conflicts = await _fetch_active_driver_conflicts(db)
+    vehicle_conflicts = _active_vehicle_conflicts(recent_journeys)
 
     total_revenue = payment_summary["receivable_total"]
     total_expense = payment_summary["expense_total"] or payment_summary["payment_request_total"]
 
     # Totals
     total_vehicles = await db.execute(text("SELECT COUNT(*) as count FROM fleet_vehicle WHERE active = true"))
-    total_trips = await db.execute(text("SELECT COUNT(*) as count FROM trip_trip"))
-    active_trips = await db.execute(text("SELECT COUNT(*) as count FROM trip_trip WHERE COALESCE(state, '') NOT IN ('done', 'cancel', 'cancelled')"))
     total_drivers = await db.execute(text("SELECT COUNT(*) as count FROM hr_employee WHERE active = true"))
 
-    active_trip_count = active_trips.fetchone().count
-    total_trip_count = total_trips.fetchone().count
     profit = total_revenue - total_expense
     collection_rate = (payment_summary["customer_paid_total"] / total_revenue * 100) if total_revenue else 0
     vendor_clearance_rate = (
         payment_summary["vendor_paid_total"] / payment_summary["payment_request_total"] * 100
     ) if payment_summary["payment_request_total"] else 0
-    active_trip_ratio = (active_trip_count / total_trip_count * 100) if total_trip_count else 0
+    active_trip_ratio = (active_journey_count / total_journey_count * 100) if total_journey_count else 0
     profit_margin = (profit / total_revenue * 100) if total_revenue else 0
     custom_kpis = [
         {"label": "Customer Payment Collected", "value": payment_summary["customer_paid_total"], "format": "money", "tone": "green"},
@@ -582,15 +675,69 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
         "_mode": "live",
         "summary": {
             "total_vehicles": total_vehicles.fetchone().count,
-            "total_journeys": total_trip_count,
+            "total_journeys": total_journey_count,
             "total_drivers": total_drivers.fetchone().count,
             "total_revenue": total_revenue,
             "total_expense": total_expense,
         },
         "vehicles_by_brand": brands,
-        "journeys_by_status": trip_states,
+        "journeys_by_status": journeys_by_status,
         "recent_journeys": recent_journeys,
-        "active_journey_count": active_trip_count,
+        "vehicle_locations": [
+            {
+                "vehicle_id": row.get("vehicle_id"),
+                "vehicle_plate": row.get("vehicle_plate"),
+                "vehicle_brand": row.get("brand") or row.get("model"),
+                "supervisor_name": row.get("supervisor_name"),
+                "driver_name": row.get("driver_name"),
+                "trip_id": row.get("trip_id"),
+                "reference": row.get("reference"),
+                "state": row.get("state"),
+                "departure_name": row.get("departure_name"),
+                "destination_name": row.get("destination_name"),
+                "current_location_name": row.get("current_location_name") or row.get("location_name"),
+                "current_location_note": row.get("current_location_note"),
+                "current_location_days": row.get("current_location_days") or 0,
+                "departure_date": row.get("departure_date"),
+                "arrival_date": row.get("arrival_date"),
+                "create_date": row.get("create_date"),
+                "write_date": row.get("write_date"),
+            }
+            for row in vehicle_location_rows
+        ],
+        "all_trip_rows": [
+            {
+                "id": row.get("id"),
+                "name": row.get("name"),
+                "vehicle_id": row.get("vehicle_id"),
+                "vehicle_plate": row.get("license_plate"),
+                "driver_name": row.get("driver_name"),
+                "origin": row.get("departure_name"),
+                "destination": row.get("destination_name"),
+                "current_location": row.get("current_location_name"),
+                "current_location_note": row.get("current_location_note"),
+                "status": row.get("state"),
+                "state": row.get("state"),
+                "departure_date": row.get("departure_date"),
+                "arrival_date": row.get("arrival_date"),
+                "create_date": row.get("create_date"),
+                "write_date": row.get("write_date"),
+                "total_revenue": _as_float(row.get("total_revenue")),
+                "total_expense": _as_float(row.get("total_expense")),
+                "paid_amount": _as_float(row.get("paid_amount")),
+                "pending_payment": _as_float(row.get("pending_amount")),
+                "payment_request_total": _as_float(row.get("payment_request_total")),
+                "payment_request_count": int(row.get("payment_request_count") or 0),
+                "payment_request_lines": row.get("payment_request_lines") or [],
+                "order_receivable_count": int(row.get("order_receivable_count") or 0),
+            }
+            for row in trip_rows
+        ],
+        "active_journey_count": active_journey_count,
+        "driver_conflict_count": len(driver_conflicts),
+        "driver_conflicts": driver_conflicts,
+        "vehicle_conflict_count": len(vehicle_conflicts),
+        "vehicle_conflicts": vehicle_conflicts,
         "total_revenue": total_revenue,
         "total_expense": total_expense,
         "total_profit": profit,
@@ -604,34 +751,36 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
         },
     }
 
-
-@router.post("/seed")
-async def seed_mock_data() -> dict:
-    """Regenerate mock demo data."""
-    global mock_db
-    mock_db = MockDatabase()
-    return {"status": "ok", "message": f"Seeded {len(mock_db.journeys)} journeys, {len(mock_db.vehicles)} vehicles, {len(mock_db.drivers)} drivers"}
-
-
-@router.post("/seed-mayet-demo")
-async def seed_mayet_demo() -> dict:
-    """Apply cached Mayet vehicle names/statuses to demo trips."""
-    catalog = _read_mayet_vehicle_catalog() or {}
-    vehicles = catalog.get("vehicles", [])
-    updated = mock_db.seed_mayet_vehicle_statuses(vehicles if isinstance(vehicles, list) else [])
-    return {
-        "status": "ok",
-        "updated_demo_vehicles": updated,
-        "mayet_catalog_count": len(vehicles) if isinstance(vehicles, list) else 0,
-        "message": f"Seeded {updated} demo vehicles with Mayet names/statuses.",
-    }
-
-
 @router.get("/vehicles")
-async def get_mock_vehicles(
-    mode: str = Query("demo", description="'demo' for mock data, 'live' for real Odoo DB"),
+async def get_dashboard_vehicles(
+    db: AsyncSession = Depends(get_session),
 ) -> list[dict]:
-    """Return all vehicles. Fast in demo mode."""
-    if mode == "demo":
-        return mock_db.get_all_vehicles()
-    raise NotImplementedError("Live vehicle list not yet implemented")
+    """Return active fleet vehicles from Odoo."""
+    result = await db.execute(text("""
+        SELECT
+            v.id,
+            v.license_plate,
+            v.name,
+            m.name AS model,
+            b.name AS brand,
+            v.driver_id,
+            v.active
+        FROM fleet_vehicle v
+        LEFT JOIN fleet_vehicle_model m ON v.model_id = m.id
+        LEFT JOIN fleet_vehicle_model_brand b ON m.brand_id = b.id
+        WHERE v.active = true
+        ORDER BY COALESCE(v.license_plate, v.name, CAST(v.id AS text))
+        LIMIT 1000
+    """))
+    return [
+        {
+            "id": row.id,
+            "license_plate": row.license_plate,
+            "name": row.name,
+            "model": row.model,
+            "brand": row.brand,
+            "driver_id": row.driver_id,
+            "active": row.active,
+        }
+        for row in result.fetchall()
+    ]

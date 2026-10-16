@@ -25,8 +25,14 @@ def _config_value(key: str, default: str) -> str:
     env_val = os.getenv(key)
     if env_val:
         return env_val
-    env_path = Path(__file__).resolve().parents[3] / ".env"
-    if env_path.exists():
+    env_paths = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+        Path(__file__).resolve().parents[3] / ".env",
+    ]
+    for env_path in env_paths:
+        if not env_path.exists():
+            continue
         for line in env_path.read_text().splitlines():
             if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
                 continue
@@ -47,6 +53,13 @@ if not AUTH_SECRET or AUTH_SECRET == "change-this-fleet-auth-secret":
     )
 
 
+ROLE_BY_LOGIN = {
+    "danat.yoh": "manager",
+    "alula.yem": "supervisor",
+    "barbra.sem": "salesperson",
+}
+
+
 # Load users from environment; passwords MUST be bcrypt hashed externally.
 # Example env: FLEET_USERS=danat.yoh:$2b$12$...,alula.yem:$2b$12$...
 # Falls back to known insecure dev defaults ONLY if FLEET_INSECURE_DEV=1
@@ -57,7 +70,13 @@ if _USERS_RAW:
         entry = entry.strip()
         if ":" in entry:
             u, p = entry.split(":", 1)
-            USERS[u.strip().lower()] = {"username": u.strip(), "password": p.strip()}
+            username = u.strip()
+            USERS[username.lower()] = {
+                "username": username,
+                "password": p.strip(),
+                "role": ROLE_BY_LOGIN.get(username.lower(), "salesperson"),
+                "name": username,
+            }
 elif os.getenv("FLEET_INSECURE_DEV") == "1":
     import warnings
     warnings.warn(
@@ -67,21 +86,15 @@ elif os.getenv("FLEET_INSECURE_DEV") == "1":
     )
     # Insecure dev fallbacks
     USERS = {
-        "danat.yoh": {"username": "danat.yoh", "password": "**REDACTED**", "role": "manager", "name": "Manager"},
-        "alula.yem": {"username": "alula.yem", "password": "**REDACTED**", "role": "supervisor", "name": "Supervisor"},
-        "barbra.sem": {"username": "barbra.sem", "password": "**REDACTED**", "role": "salesperson", "name": "Salesperson"},
+        "danat.yoh": {"username": "danat.yoh", "password": "123", "role": "manager", "name": "Manager"},
+        "alula.yem": {"username": "alula.yem", "password": "123", "role": "supervisor", "name": "Supervisor"},
+        "barbra.sem": {"username": "barbra.sem", "password": "123", "role": "salesperson", "name": "Salesperson"},
     }
 else:
     raise RuntimeError(
         "FLEET_USERS env var not set and FLEET_INSECURE_DEV is disabled. "
         "Set FLEET_USERS or run with FLEET_INSECURE_DEV=1 for local dev only."
     )
-
-ROLE_BY_LOGIN = {
-    "danat.yoh": "manager",
-    "alula.yem": "supervisor",
-    "barbra.sem": "salesperson",
-}
 
 
 def _b64encode(data: bytes) -> str:

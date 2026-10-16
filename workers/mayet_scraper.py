@@ -102,6 +102,8 @@ class GpsPosition:
     location: str | None = None
     address: str | None = None
     speed: float | None = None
+    fuel_level: float | None = None
+    stop_duration: str | None = None
     ignition: str | None = None
     captured_at: str | None = None
     raw: dict[str, Any] | None = None
@@ -114,6 +116,8 @@ class GpsPosition:
             "location": self.location,
             "address": self.address,
             "speed": self.speed,
+            "fuel_level": self.fuel_level,
+            "stop_duration": self.stop_duration,
             "ignition": self.ignition,
             "captured_at": self.captured_at or datetime.now(timezone.utc).isoformat(),
             "raw": self.raw or {},
@@ -139,7 +143,7 @@ def _plate_key(plate: str) -> str:
 
 
 def _first_plate_number(plate: str) -> str:
-    match = re.search(r"\d+", plate or "")
+    match = re.search(r"\d{4,}", plate or "")
     return match.group(0).lstrip("0") if match else plate
 
 
@@ -229,13 +233,25 @@ def _position_from_item(plate: str, item: dict[str, Any]) -> GpsPosition | None:
         lng = lng or coordinate_match.group(2)
     status_text = str(item.get("status") or "")
     status_match = re.search(r"title=['\"]([^'\"]+)['\"]", status_text)
+    def item_float(*keys: str) -> float | None:
+        for key in keys:
+            value = item.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                return float(str(value).replace("%", "").strip())
+            except ValueError:
+                continue
+        return None
     return GpsPosition(
         plate=item_plate or plate,
         latitude=float(lat) if lat not in (None, "") else None,
         longitude=float(lng) if lng not in (None, "") else None,
         location=status_match.group(1) if status_match else item.get("location") or item.get("status") or item.get("geofence"),
         address=item.get("address") or item.get("addr") or re.sub(r"<[^>]+>", "", position_html).strip() or None,
-        speed=float(item["speed"]) if item.get("speed") not in (None, "") else None,
+        speed=item_float("speed", "speed_kph", "velocity"),
+        fuel_level=item_float("fuel_level", "fuel", "fuel_percent"),
+        stop_duration=item.get("stop_duration") or item.get("stop_time") or item.get("stopped_for") or item.get("parking_time"),
         ignition=str(item.get("ignition") or item.get("acc") or "") or None,
         captured_at=item.get("time") or item.get("timestamp") or item.get("gps_time"),
         raw=item,
@@ -323,6 +339,9 @@ def cache_position(position: GpsPosition) -> bool:
         f"fleet:gps:{position.plate.upper()}",
         f"fleet:gps:{_plate_key(position.plate)}",
     }
+    plate_number = _first_plate_number(position.plate)
+    if plate_number:
+        keys.add(f"fleet:gps:{plate_number}")
     for key in keys:
         redis.set(key, raw, ex=GPS_CACHE_TTL_SECONDS)
     redis.set("fleet:gps:last_check", datetime.now(timezone.utc).isoformat(), ex=GPS_CACHE_TTL_SECONDS)

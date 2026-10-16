@@ -23,7 +23,6 @@ The app listens on port `8004`.
 ```bash
 curl http://127.0.0.1:8004/health
 curl "http://127.0.0.1:8004/api/dashboard/full?mode=live"
-curl "http://127.0.0.1:8004/api/dashboard/full?mode=demo"
 curl "http://127.0.0.1:8004/api/journeys/1/timeline"
 ```
 

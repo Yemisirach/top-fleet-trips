@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.core.auth import AUTH_COOKIE_NAME, AUTH_SESSION_SECONDS, authenticate, create_token, public_user, require_user
+from app.core.settings import get_settings
 
 
 router = APIRouter()
@@ -18,7 +19,7 @@ async def login(payload: dict, response: Response) -> dict:
         max_age=AUTH_SESSION_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=get_settings().auth_cookie_secure,
     )
     return {"user": public_user(user)}
 

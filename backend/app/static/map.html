@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fleet Trips - Visual Map</title>
+    <title>TOP Fleet - Visual Map</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -70,7 +70,7 @@
 <body>
     <header class="topbar">
         <div class="brand">
-            <img src="/static/fleet-trips-logo.svg" alt="Fleet Trips">
+            <img src="/static/fleet-trips-logo.svg" alt="TOP Fleet">
             <div>
                 <div class="title">Visual Trip View</div>
                 <div class="subtitle" id="subtitle">DB route and Mayet GPS comparison</div>
@@ -162,7 +162,7 @@
             return Number(trip.order_count || trip.order_receivable_count || trip.payment_request_count || legCount || 1);
         }
         function firstPlateNumber(value) {
-            const match = String(value || '').match(/\d+/);
+            const match = String(value || '').match(/\d{4,}/);
             return match ? match[0].replace(/^0+/, '') || match[0] : String(value || '');
         }
         function vehicleRefFromTrip(trip) {
@@ -230,23 +230,33 @@
             const lng = Number(source && (source.longitude ?? source.lng ?? source.lon));
             return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
         }
+        function isMayetDeviceStatus(value) {
+            return ['offline', 'online', 'ack', 'idle', 'moving', 'stopped', 'status pending'].includes(String(value || '').trim().toLowerCase());
+        }
+        function mayetGpsLocation(gps) {
+            const point = readLatLng(gps);
+            if (gps && gps.address) return gps.address;
+            if (gps && gps.location && !isMayetDeviceStatus(gps.location)) return gps.location;
+            if (point) return `${point[0]}, ${point[1]}`;
+            return 'No Mayet current location';
+        }
         function gpsFromTrip(trip) {
             if (!trip || trip.mayet_latitude == null || trip.mayet_longitude == null) return null;
             return {
                 plate: trip.vehicle_plate || trip.vehicle_id || trip.id,
                 latitude: trip.mayet_latitude,
                 longitude: trip.mayet_longitude,
-                location: trip.mayet_status,
+                location: trip.mayet_current_location || trip.mayet_address,
+                address: trip.mayet_address || trip.mayet_current_location,
                 captured_at: trip.mayet_captured_at,
             };
         }
         async function loadTrip() {
             if (!tripId && vehicleParam) return loadSelectedVehicle(vehicleParam);
             if (!tripId) return loadFleetMap();
-            const mode = localStorage.getItem('fleetDashboardMode') || 'live';
             let trip = null;
             try {
-                const data = await fetchJson(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(mode)}`);
+                const data = await fetchJson(`${API_BASE}/dashboard/full?mode=live`);
                 trip = (data.recent_journeys || []).find((item) => String(item.id) === String(tripId));
             } catch (error) {}
             if (!trip) {
@@ -273,20 +283,19 @@
             loadVehicleHistory(vehicleRef);
             // Update Mayet panel for selected vehicle
             const gps = gpsPayload && gpsPayload.gps;
-            const statusText = gps ? (gps.location || 'Cached') : 'Waiting for Mayet GPS cache';
+            const statusText = gps ? mayetGpsLocation(gps) : 'Waiting for Mayet GPS cache';
             document.getElementById('mayet-subtitle').textContent = `${vehicleRef} · ${statusText}`;
             document.getElementById('mayet-body').innerHTML = `
                 <div class="state-box"><div class="state-label">Selected Vehicle</div><div class="state-value">${clean(vehicleRef)}</div></div>
-                <div class="state-box"><div class="state-label">GPS Status</div><div class="state-value ${gps ? 'green' : 'amber'}">${statusText}</div></div>
+                <div class="state-box"><div class="state-label">Current Location</div><div class="state-value ${gps ? 'green' : 'amber'}">${statusText}</div></div>
                 <div class="state-box"><div class="state-label">Speed</div><div class="state-value">${gps && gps.speed != null ? gps.speed + ' km/h' : 'N/A'}</div></div>
                 <div class="state-box"><div class="state-label">Captured</div><div class="state-value">${gps && gps.captured_at ? gps.captured_at : 'N/A'}</div></div>
                 <div class="mayet-note">Live GPS is shown from the Mayet worker cache. Use Open Mayet for direct authenticated inspection in Mayet.</div>
             `;
         }
         async function loadFleetMap() {
-            const mode = localStorage.getItem('fleetDashboardMode') || 'live';
             const [dashboard, catalog] = await Promise.all([
-                fetchJson(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(mode)}`).catch(() => ({ recent_journeys: [] })),
+                fetchJson(`${API_BASE}/dashboard/full?mode=live`).catch(() => ({ recent_journeys: [] })),
                 fetchJson(`${API_BASE}/dashboard/mayet/vehicles`).catch(() => ({ vehicles: [] })),
             ]);
             const trips = Array.isArray(dashboard.recent_journeys) ? dashboard.recent_journeys : [];
@@ -357,7 +366,7 @@
             const dbLocation = getDbLocation(trip);
             const gps = (gpsPayload && gpsPayload.gps) || gpsFromTrip(trip);
             const gpsPoint = readLatLng(gps);
-            const gpsLocation = gps ? [gps.location, gps.address, gpsPoint ? `${gpsPoint[0]}, ${gpsPoint[1]}` : ''].filter(Boolean).join(' · ') : 'No cached Mayet GPS position';
+            const gpsLocation = gps ? mayetGpsLocation(gps) : 'No Mayet current location';
             const differs = gps && gpsLocation && !gpsLocation.toLowerCase().includes(String(dbLocation).toLowerCase());
             const mayetUrl = buildMayetUrl((gpsPayload && gpsPayload.mayet_url) || 'https://mayetgps.com/', trip);
             const state = normalizeState(trip.status);
@@ -382,7 +391,7 @@
                         <div class="selected-speed">${clean(gps && gps.speed != null ? `${gps.speed}` : '0')}<br><span style="font-size:10px;">kph</span></div>
                     </div>
                     <div class="selected-meta">
-                        <div><strong>Address:</strong> ${clean((gps && (gps.address || gps.location)) || 'Waiting for Mayet GPS cache')}</div>
+                        <div><strong>Current Location:</strong> ${clean(gps ? mayetGpsLocation(gps) : 'Waiting for Mayet GPS cache')}</div>
                         <div><strong>Time:</strong> ${clean(gps && gps.captured_at ? new Date(gps.captured_at).toLocaleString() : 'N/A')}</div>
                         <div><strong>Coordinates:</strong> ${clean(gpsPoint ? `${gpsPoint[0]}, ${gpsPoint[1]}` : 'N/A')}</div>
                         <div><strong>Battery:</strong> ${clean(gps && gps.battery != null ? `${gps.battery}%` : 'N/A')} · <strong>Mileage:</strong> ${clean(gps && gps.mileage != null ? gps.mileage : 'N/A')}</div>
@@ -423,7 +432,7 @@
                 points.push(gpsPoint);
                 const gpsMarker = L.circleMarker(gpsPoint, { radius: 10, color: gpsTone(gps.location), fillColor: gpsTone(gps.location), fillOpacity: 0.9 })
                     .addTo(map)
-                    .bindPopup(`<b>Mayet GPS</b><br>${clean(gps.plate || trip.vehicle_plate || trip.id)}<br>${clean(gps.location || 'Status pending')}<br>${clean(gps.address || '')}`);
+                    .bindPopup(`<b>Mayet GPS</b><br>${clean(gps.plate || trip.vehicle_plate || trip.id)}<br>${clean(mayetGpsLocation(gps))}`);
                 map.setView(gpsPoint, 15);
                 gpsMarker.openPopup();
                 return;

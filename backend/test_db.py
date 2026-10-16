@@ -1,9 +1,12 @@
 import asyncio
+import os
 import asyncpg
-import sys
+import pytest
 
 async def main():
-    db_url = "postgresql://testbed_user:estbed%40321@167.235.55.60:5432/Testbed"
+    db_url = (os.getenv("ODOO_DATABASE_URL") or os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
+    if not db_url:
+        raise RuntimeError("Set ODOO_DATABASE_URL or DATABASE_URL to run this check.")
     try:
         print("Connecting to DB...")
         conn = await asyncpg.connect(db_url, timeout=5)
@@ -16,3 +19,16 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+@pytest.mark.asyncio
+async def test_database_connection_from_env():
+    db_url = (os.getenv("ODOO_DATABASE_URL") or os.getenv("DATABASE_URL") or "").replace("+asyncpg", "")
+    if not db_url:
+        pytest.skip("ODOO_DATABASE_URL or DATABASE_URL is not set.")
+    conn = await asyncpg.connect(db_url, timeout=5)
+    try:
+        result = await conn.fetchval("SELECT 1")
+        assert result == 1
+    finally:
+        await conn.close()

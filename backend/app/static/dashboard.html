@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fleet Trips Dashboard</title>
+    <title>TOP Fleet Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -148,7 +148,6 @@
             background: var(--panel);
         }
         .mode-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
-        .mode-badge.demo .mode-dot { background: var(--amber); }
         .mode-badge.warning .mode-dot { background: var(--red); }
         .mode-label { color: var(--muted); font-size: 13px; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         select, input {
@@ -502,15 +501,14 @@
     <div class="layout">
         <aside class="sidebar" id="sidebar">
             <div class="brand">
-                <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="Fleet Trips"></div>
+                <div class="brand-mark"><img src="/static/fleet-trips-logo.svg" alt="TOP Fleet"></div>
                 <div class="brand-copy">
-                    <div class="brand-title">Fleet Trips</div>
+                    <div class="brand-title">TOP Fleet</div>
                     <div class="brand-subtitle">Odoo workflow</div>
                 </div>
             </div>
             <nav class="nav" id="nav">
                 <button class="active" data-view="dashboard"><span class="nav-icon"><i data-lucide="layout-dashboard" class="icon"></i></span><span class="nav-label">Dashboard</span></button>
-                <button data-view="trips" data-status="active"><span class="nav-icon"><i data-lucide="route" class="icon"></i></span><span class="nav-label">Active Trips</span></button>
                 <button data-view="trips" data-status="available"><span class="nav-icon"><i data-lucide="clipboard-list" class="icon"></i></span><span class="nav-label">Pending Assignment</span></button>
                 <button data-view="locations"><span class="nav-icon"><i data-lucide="map-pin" class="icon"></i></span><span class="nav-label">Current Location</span></button>
                 <button data-view="payments"><span class="nav-icon"><i data-lucide="credit-card" class="icon"></i></span><span class="nav-label">Payments</span></button>
@@ -536,10 +534,6 @@
                         <span class="mode-dot"></span>
                         <span class="mode-label" id="mode-label">Live DB</span>
                     </div>
-                    <select id="mode-select" aria-label="Data source">
-                        <option value="live">Live DB</option>
-                        <option value="demo">Demo DB</option>
-                    </select>
                     <button class="btn" id="theme-toggle" type="button"><i data-lucide="moon" class="icon"></i><span id="theme-label">Dark</span></button>
                 </div>
             </div>
@@ -592,7 +586,7 @@
                     <div class="panel">
                         <div class="panel-header">
                             <div>
-                                <div class="panel-title">Recent Trips</div>
+                                <div class="panel-title">Recent Journeys</div>
                                 <div class="panel-subtitle">Latest vehicle and driver activity</div>
                             </div>
                         </div>
@@ -616,16 +610,6 @@
                         </div>
                     </div>
                     <div class="table-wrap"><table id="driver-activity-table"></table></div>
-                </div>
-                <div class="panel">
-                    <div class="panel-header">
-                        <div>
-                            <div class="panel-title">Active Trips</div>
-                            <div class="panel-subtitle">Available, Assigned, and Dispatched vehicles</div>
-                        </div>
-                        <button class="btn" data-open-view="trips" data-status="active"><i data-lucide="arrow-right" class="icon"></i>Open</button>
-                    </div>
-                    <div class="trip-list" id="dashboard-active"></div>
                 </div>
             </section>
 
@@ -721,7 +705,7 @@
             supervisors: ['Supervisors', 'Vehicle access scope'],
             reports: ['Reports', 'Operational and finance reports'],
         };
-        let currentMode = localStorage.getItem('fleetDashboardMode') || 'live';
+        let currentMode = 'live';
         let currentTheme = localStorage.getItem('fleetTheme') || 'light';
         let currentView = 'dashboard';
         let statusFilter = 'all';
@@ -742,7 +726,6 @@
         const metricIcons = {
             Vehicles: 'truck',
             Journeys: 'route',
-            'Active Journeys': 'navigation',
             'Pending Assignment': 'clipboard-list',
             'Customer Paid': 'badge-check',
             'Customer Pending': 'clock',
@@ -751,7 +734,7 @@
             'Vendor Payments Cleared': 'wallet-cards',
             'Pending Vendor Payment': 'hourglass',
             'Collection Rate': 'percent',
-            'Active Journey Ratio': 'activity',
+            'Journey Motion Ratio': 'activity',
             'Vehicle Orders': 'list-ordered',
         };
 
@@ -791,6 +774,16 @@
             const legCount = Array.isArray(trip.trips) ? trip.trips.length : 0;
             return Number(trip.order_count || trip.order_receivable_count || trip.payment_request_count || legCount || 1);
         }
+        function isMayetDeviceStatus(value) {
+            return ['offline', 'online', 'ack', 'idle', 'moving', 'stopped', 'status pending'].includes(String(value || '').trim().toLowerCase());
+        }
+        function mayetLocationLabel(trip) {
+            if (trip.mayet_current_location) return trip.mayet_current_location;
+            if (trip.mayet_address) return trip.mayet_address;
+            if (trip.mayet_latitude != null && trip.mayet_longitude != null) return `${Number(trip.mayet_latitude).toFixed(5)}, ${Number(trip.mayet_longitude).toFixed(5)}`;
+            if (trip.mayet_status && !isMayetDeviceStatus(trip.mayet_status)) return trip.mayet_status;
+            return 'No Mayet current location';
+        }
 
         function getSearchMatchedTrips() {
             const query = $('global-search').value.trim().toLowerCase();
@@ -817,7 +810,7 @@
                     trip.pending_payment,
                     trip.payment_request_total,
                     trip.pending_expense_payment,
-                    trip.mayet_status,
+                    mayetLocationLabel(trip),
                     paymentLabel(trip),
                     getOrderCount(trip),
                     legs,
@@ -890,10 +883,9 @@
         }
 
         async function loadDashboard() {
-            $('mode-select').value = currentMode;
             updateModeBadge(currentMode, 'Loading...');
             try {
-                const response = await fetch(`${API_BASE}/dashboard/full?mode=${encodeURIComponent(currentMode)}`);
+                const response = await fetch(`${API_BASE}/dashboard/full?mode=live`);
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
                     throw new Error(errorData.detail || `Load failed (${response.status})`);
@@ -901,21 +893,22 @@
                 const data = await response.json();
                 dashboardData = data;
                 allTrips = data.recent_journeys || [];
-                updateModeBadge(data._mode || currentMode, data._warning || '');
+                updateModeBadge(data._mode || currentMode, data._stale_live_cache ? '' : (data._warning || ''), data._stale_live_cache);
                 renderAll();
             } catch (error) {
-                dashboardData = {};
-                allTrips = [];
+                if (!dashboardData.recent_journeys) {
+                    dashboardData = {};
+                    allTrips = [];
+                }
                 updateModeBadge(currentMode, error.message || 'Load failed');
                 renderAll();
             }
         }
 
-        function updateModeBadge(mode, warning) {
+        function updateModeBadge(mode, warning, stale) {
             const badge = $('mode-badge');
-            badge.classList.toggle('demo', mode === 'demo');
             badge.classList.toggle('warning', Boolean(warning));
-            $('mode-label').textContent = warning || (mode === 'demo' ? 'Demo DB' : 'Live DB');
+            $('mode-label').textContent = warning || (stale ? 'Cached Odoo' : 'Live Odoo');
             $('mode-label').title = warning || '';
         }
 
@@ -927,8 +920,7 @@
             const orderCount = allTrips.reduce((sum, trip) => sum + getOrderCount(trip), 0);
             const cards = [
                 ['Vehicles', summary.total_vehicles || 0, 'blue', 'supervisors'],
-                ['Journeys', summary.total_journeys || allTrips.length, '', 'trips', 'all'],
-                ['Active Journeys', dashboardData.active_journey_count || active, 'blue', 'trips', 'active'],
+                ['Trips', summary.total_journeys || allTrips.length, '', 'trips', 'all'],
                 ['Vehicle Orders', orderCount || pending, '', 'trips', 'all'],
                 ['Customer Paid', money(payment.customer_paid_total || 0), 'green', 'payments'],
                 ['Customer Pending', money(payment.customer_pending_total || 0), 'red', 'payments'],
@@ -961,10 +953,10 @@
             const startLabel = tripSeries[0]?.[0] || 'No date';
             const endLabel = tripSeries[tripSeries.length - 1]?.[0] || 'No date';
             const cards = [
-                ['Journey Activity', searchedTrips.length, `${activeRate}% active`, tripSeries, '', 'trips', 'available'],
+                ['Journey Activity', searchedTrips.length, `${activeRate}% in motion`, tripSeries, '', 'trips', 'available'],
                 ['Revenue Trend', money(revenue), `${collectionRate}% collected`, revenueSeries, 'green', 'payments', ''],
                 ['Vehicle Orders', orderCount, 'last 7 journey days', orderSeries, 'amber', 'trips', 'all'],
-                ['Dispatched Now', dispatched, `${active} active journeys`, tripSeries.map(([day, value]) => [day, Math.min(value, dispatched || value)]), '', 'trips', 'dispatched'],
+                ['Dispatched Now', dispatched, `${active} currently in scope`, tripSeries.map(([day, value]) => [day, Math.min(value, dispatched || value)]), '', 'trips', 'dispatched'],
             ];
             $('analytics-strip').innerHTML = cards.map(([label, value, delta, series, tone, view, status]) => `
                 <article class="card trend-card" data-open-view="${clean(view)}" ${status ? `data-status="${clean(status)}"` : ''}>
@@ -993,7 +985,7 @@
             const points = [];
             const trips = getSearchMatchedTrips().slice(0, 12);
             trips.forEach((trip) => {
-                const origin = trip.origin || 'Addis Ababa';
+                const origin = trip.origin || trip.journey_start;
                 const destination = Array.isArray(trip.destinations) && trip.destinations.length ? trip.destinations[0] : trip.destination;
                 const originPoint = cityCoords[origin];
                 const destinationPoint = cityCoords[destination];
@@ -1019,7 +1011,7 @@
                 <a class="map-side-row" href="/map.html?journey_id=${encodeURIComponent(trip.id)}&vehicle=${encodeURIComponent(trip.vehicle_plate || trip.vehicle_id || trip.id)}" target="_blank">
                     <div class="map-side-label">${clean(stateLabel(trip.status))} · ${clean(paymentLabel(trip))}</div>
                     <div class="map-side-value">${clean(trip.vehicle_plate || trip.id)}</div>
-                    <div class="muted">${clean(trip.customer_name || 'Customer')} · ${clean(Array.isArray(trip.destinations) ? trip.destinations.join(', ') : trip.destination || 'Destination pending')}</div>
+                    <div class="muted">${clean(trip.customer_name || 'Customer not set')} · ${clean(Array.isArray(trip.destinations) ? trip.destinations.join(', ') : trip.destination || 'Destination not set')}</div>
                 </a>
             `).join('') || '<div class="empty">No map records.</div>';
         }
@@ -1036,17 +1028,15 @@
                 const margin = revenue ? Math.round((profit / revenue) * 100) : 0;
                 const legs = Array.isArray(trip.trips) ? trip.trips : [];
                 const destinations = Array.isArray(trip.destinations) ? trip.destinations : [];
-                const journeyStart = trip.journey_start || 'TOP Factory';
-                const journeyEnd = trip.journey_end || 'TOP Factory';
+                const journeyStart = trip.journey_start || 'Origin not set';
+                const journeyEnd = trip.journey_end || 'Return location not set';
                 const origin = trip.origin || journeyStart;
                 const destination = destinations[0] || (legs[0] && legs[0].destination) || 'Pending destination';
                 const totalDistance = legs.reduce((sum, leg) => sum + Number(leg.distance_km || 0), 0);
-                const seed = Number(String(trip.id || 0).slice(-4)) || 1;
-                const moving = state === 'dispatched';
-                const speed = moving ? 58 + (seed % 24) : 0;
-                const fuel = 38 + (seed % 47);
-                const telemetryDistance = totalDistance || 420 + (seed % 900);
-                const visibleLegs = legs.length ? legs.slice(0, 3) : [{ origin, destination, distance_km: telemetryDistance, status: state, revenue: trip.total_revenue, expense: trip.total_expense }];
+                const speed = typeof trip.mayet_speed === 'number' ? trip.mayet_speed : null;
+                const fuel = typeof trip.mayet_fuel_level === 'number' ? trip.mayet_fuel_level : null;
+                const telemetryDistance = totalDistance || null;
+                const visibleLegs = legs.length ? legs.slice(0, 3) : [{ origin, destination, status: state, revenue: trip.total_revenue, expense: trip.total_expense }];
                 const tripId = String(trip.id || '');
                 const timelineId = `timeline-${targetId}-${tripId}`;
                 const payState = getPaymentState(trip);
@@ -1071,8 +1061,8 @@
                             <div class="meta-row"><span class="muted">Driver</span><span class="meta-value">${clean(trip.driver_name || 'Unassigned')}</span></div>
                             <div class="meta-row"><span class="muted">Departure</span><span class="meta-value">${clean(trip.departure_date || 'Not set')}</span></div>
                             <div class="meta-row"><span class="muted">Payment</span><span class="meta-value">${paymentLabel(trip)}</span></div>
-                            <div class="meta-row"><span class="muted">Mayet</span><span class="meta-value">${clean(trip.mayet_status || 'No GPS cache')}</span></div>
-                            <div class="meta-row"><span class="muted">Trips Inside</span><span class="meta-value">${clean(trip.trip_count || visibleLegs.length)} trip${Number(trip.trip_count || visibleLegs.length) === 1 ? '' : 's'}</span></div>
+                            <div class="meta-row"><span class="muted">Mayet</span><span class="meta-value">${clean(mayetLocationLabel(trip))}</span></div>
+                            <div class="meta-row"><span class="muted">Trips</span><span class="meta-value">${clean(trip.trip_count || visibleLegs.length)} trip${Number(trip.trip_count || visibleLegs.length) === 1 ? '' : 's'}</span></div>
                         </div>
                         <div class="route-panel">
                             <div class="route-line">
@@ -1105,16 +1095,16 @@
                             <div class="money-box"><div class="money-label">Expense</div><div class="money-value red">${money(trip.total_expense)}</div></div>
                         </div>
                         <div class="telemetry desktop-only">
-                            <div class="telemetry-box"><div class="telemetry-label">Speed</div><div class="telemetry-value">${speed} km/h</div></div>
-                            <div class="telemetry-box"><div class="telemetry-label">Fuel</div><div class="telemetry-value">${fuel}%</div></div>
-                            <div class="telemetry-box"><div class="telemetry-label">Distance</div><div class="telemetry-value">${telemetryDistance} km</div></div>
+                            <div class="telemetry-box"><div class="telemetry-label">Speed</div><div class="telemetry-value">${speed === null ? 'N/A' : `${speed} km/h`}</div></div>
+                            <div class="telemetry-box"><div class="telemetry-label">Fuel</div><div class="telemetry-value">${fuel === null ? 'N/A' : `${fuel}%`}</div></div>
+                            <div class="telemetry-box"><div class="telemetry-label">Distance</div><div class="telemetry-value">${telemetryDistance === null ? 'N/A' : `${telemetryDistance} km`}</div></div>
                         </div>
                         <details class="trip-more mobile-only">
                             <summary>More details</summary>
                             <div class="trip-more-body">
                                 <div class="meta">
                                     <div class="meta-row"><span class="muted">Customer</span><span class="meta-value">${clean(trip.customer_name || 'N/A')}</span></div>
-                                    <div class="meta-row"><span class="muted">Mayet</span><span class="meta-value">${clean(trip.mayet_status || 'No GPS cache')}</span></div>
+                                    <div class="meta-row"><span class="muted">Mayet</span><span class="meta-value">${clean(mayetLocationLabel(trip))}</span></div>
                                     <div class="meta-row"><span class="muted">Paid</span><span class="meta-value">${money(trip.paid_amount)}</span></div>
                                     <div class="meta-row"><span class="muted">Pending</span><span class="meta-value">${money(trip.pending_payment)}</span></div>
                                 </div>
@@ -1127,9 +1117,9 @@
                                     `).join('')}
                                 </div>
                                 <div class="telemetry">
-                                    <div class="telemetry-box"><div class="telemetry-label">Speed</div><div class="telemetry-value">${speed} km/h</div></div>
-                                    <div class="telemetry-box"><div class="telemetry-label">Fuel</div><div class="telemetry-value">${fuel}%</div></div>
-                                    <div class="telemetry-box"><div class="telemetry-label">Distance</div><div class="telemetry-value">${telemetryDistance} km</div></div>
+                                    <div class="telemetry-box"><div class="telemetry-label">Speed</div><div class="telemetry-value">${speed === null ? 'N/A' : `${speed} km/h`}</div></div>
+                                    <div class="telemetry-box"><div class="telemetry-label">Fuel</div><div class="telemetry-value">${fuel === null ? 'N/A' : `${fuel}%`}</div></div>
+                                    <div class="telemetry-box"><div class="telemetry-label">Distance</div><div class="telemetry-value">${telemetryDistance === null ? 'N/A' : `${telemetryDistance} km`}</div></div>
                                 </div>
                             </div>
                         </details>
@@ -1173,13 +1163,13 @@
                 const destination = Array.isArray(trip.destinations) && trip.destinations.length ? trip.destinations[0] : 'Pending destination';
                 return [{
                     timestamp: trip.departure_date || '',
-                    location: trip.journey_start || trip.origin || 'TOP Factory',
+                    location: trip.journey_start || trip.origin || 'Origin not set',
                     note: `Journey opened toward ${destination}`,
                     source: 'Dashboard',
                 }, {
                     timestamp: trip.return_date || '',
-                    location: trip.journey_end || 'TOP Factory',
-                    note: `Return to ${trip.journey_end || 'TOP Factory'} pending`,
+                    location: trip.journey_end || 'Return location not set',
+                    note: `Return to ${trip.journey_end || 'return location not set'} pending`,
                     source: 'Dashboard',
                 }];
             }
@@ -1187,7 +1177,7 @@
             return legs.flatMap((leg) => {
                 const entries = [{
                     timestamp: leg.departure_date || trip.departure_date || '',
-                    location: leg.origin || trip.origin || 'TOP Factory',
+                    location: leg.origin || trip.origin || 'Origin not set',
                     note: `Trip leg toward ${leg.destination || 'destination'} · Revenue ${money(leg.revenue || 0)} · Expense ${money(leg.expense || 0)}`,
                     source: 'Odoo',
                 }];
@@ -1195,15 +1185,15 @@
                     entries.push({
                         timestamp: leg.arrival_date,
                         location: leg.destination || 'Destination',
-                        note: `Arrived after ${leg.distance_km || 0} km`,
+                        note: leg.distance_km ? `Arrived after ${leg.distance_km} km` : 'Arrived',
                         source: 'GPS',
                     });
                 }
                 return entries;
             }).concat([{
                 timestamp: trip.return_date || '',
-                location: trip.journey_end || 'TOP Factory',
-                note: `Journey ends when vehicle returns to ${trip.journey_end || 'TOP Factory'}`,
+                location: trip.journey_end || 'Return location not set',
+                note: `Journey ends when vehicle returns to ${trip.journey_end || 'return location not set'}`,
                 source: 'Dashboard',
             }]);
         }
@@ -1237,7 +1227,6 @@
             $('search-meta').textContent = `${getSearchMatchedTrips().length} of ${allTrips.length} shown`;
             $('trips-title').textContent = statusFilter === 'active' ? 'Active Journeys' : 'Journeys';
             renderTripCards('trip-list', filtered);
-            renderTripCards('dashboard-active', getSearchMatchedTrips().filter((trip) => ['available', 'assigned', 'dispatched'].includes(normalizeState(trip.status))).slice(0, 6));
         }
 
         function renderDashboardOverview() {
@@ -1253,7 +1242,7 @@
                     trip.customer_name || 'N/A',
                     trip.driver_name || 'Unassigned',
                     destinations || trip.origin || 'Pending',
-                    trip.mayet_status || 'No cache',
+                    mayetLocationLabel(trip),
                     paymentLabel(trip),
                     getOrderCount(trip),
                     stateLabel(trip.status),
@@ -1327,7 +1316,7 @@
             `).join('');
             renderTable('payment-table', ['Trip', 'Customer', 'Payment Status', 'Vehicle Orders', 'Receivable', 'Paid', 'Pending', 'Vendor Pending', 'Profit'], searchedTrips.map((trip) => [
                 trip.vehicle_plate || trip.id,
-                trip.customer_name || trip.driver_name || 'Customer',
+                trip.customer_name || trip.driver_name || 'Customer not set',
                 paymentLabel(trip),
                 getOrderCount(trip),
                 money(trip.total_revenue),
@@ -1459,7 +1448,7 @@
                 return;
             }
             if (view === 'payments') {
-                window.location.href = '/report.html#payment-requests';
+                window.location.href = '/payments.html';
                 return;
             }
             currentView = view;
@@ -1493,7 +1482,7 @@
                 return;
             }
             if (button.dataset.view === 'payments') {
-                window.location.href = '/report.html#payment-requests';
+                window.location.href = '/payments.html';
                 return;
             }
             openView(button.dataset.view, button.dataset.status);
@@ -1519,11 +1508,6 @@
             }
         });
         $('overlay').addEventListener('click', closeMobileSidebar);
-        $('mode-select').addEventListener('change', (event) => {
-            currentMode = event.target.value;
-            localStorage.setItem('fleetDashboardMode', currentMode);
-            loadDashboard();
-        });
         $('theme-toggle').addEventListener('click', () => {
             currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
             localStorage.setItem('fleetTheme', currentTheme);

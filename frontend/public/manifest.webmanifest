@@ -1,0 +1,52 @@
+{
+  "name": "TOP Fleet",
+  "short_name": "TOP Fleet",
+  "description": "Fleet management dashboard for Topwater Ethiopia.",
+  "start_url": "/?view=overview",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#08101d",
+  "theme_color": "#08101d",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/pwa-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/pwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Overview",
+      "short_name": "Overview",
+      "url": "/?view=overview",
+      "icons": [{ "src": "/pwa-icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Map",
+      "short_name": "Map",
+      "url": "/map",
+      "icons": [{ "src": "/pwa-icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

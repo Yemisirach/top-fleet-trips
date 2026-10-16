@@ -19,7 +19,7 @@ class OdooConnectionStatus:
 
 
 async def check_odoo_connection(session: AsyncSession) -> OdooConnectionStatus:
-    if not settings.odoo_database_url:
+    if not (settings.odoo_database_url or settings.database_url):
         return OdooConnectionStatus(
             configured=False,
             reachable=False,
