@@ -57,6 +57,11 @@ ROLE_BY_LOGIN = {
     "danat.yoh": "manager",
     "alula.yem": "supervisor",
     "barbra.sem": "salesperson",
+    "getnet.topwhaterethiopia.com": "manager",
+}
+
+NAME_BY_LOGIN = {
+    "getnet.topwhaterethiopia.com": "Getnet",
 }
 
 
@@ -75,7 +80,7 @@ if _USERS_RAW:
                 "username": username,
                 "password": p.strip(),
                 "role": ROLE_BY_LOGIN.get(username.lower(), "salesperson"),
-                "name": username,
+                "name": NAME_BY_LOGIN.get(username.lower(), username),
             }
 elif os.getenv("FLEET_INSECURE_DEV") == "1":
     import warnings
