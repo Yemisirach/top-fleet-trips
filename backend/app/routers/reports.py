@@ -1318,7 +1318,7 @@ async def whatsapp_summary_report(
     format: str = Query("default", description="Format type: default, table, csv"),
     db: AsyncSession = Depends(get_session)
 ) -> dict:
-    cache_key = f"fleet:reports:whatsapp-summary:{format}"
+    cache_key = f"fleet:reports:whatsapp-summary:v2:{format}"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -1359,7 +1359,7 @@ async def whatsapp_summary_report(
     for row in await fetch_vehicle_location_rows(db, limit=1000):
         location_name = row.get("location_name") or "Unknown"
         loc_counts[location_name] = loc_counts.get(location_name, 0) + 1
-    loc_lines = ["2. Current Location Report for all vehicles\n", "*Trailer Report*"]
+    loc_lines = ["Current Location Report for all vehicles\n", "*Trailer Report*"]
     for location_name, vehicle_count in sorted(loc_counts.items(), key=lambda item: _location_sort_key(item[0], item[1])):
         loc_lines.append(f"{vehicle_count}    {location_name}")
 

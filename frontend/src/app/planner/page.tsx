@@ -309,6 +309,7 @@ function FleetPlannerContent() {
   const nav = (view: SidebarView) => {
     if (view === "overview") router.push("/");
     else if (view === "payments") router.push("/payments");
+    else if (view === "finance") router.push("/finance");
     else if (view === "reports") router.push("/reports");
     else if (view === "map") router.push("/map");
     else if (view === "planner") router.push("/planner");

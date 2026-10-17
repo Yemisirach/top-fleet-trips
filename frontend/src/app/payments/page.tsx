@@ -970,6 +970,7 @@ export default function ReportsPage() {
         onViewChange={(v) => {
           if (v === "overview") { window.location.href = "/"; }
           else if (v === "reports") { window.location.href = "/reports"; }
+          else if (v === "finance") { window.location.href = "/finance"; }
           else if (v === "payments") { window.location.href = "/payments"; }
           else if (v === "map") { window.location.href = "/map"; }
           else { window.location.href = `/?view=${v}`; }

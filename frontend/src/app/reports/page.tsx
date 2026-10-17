@@ -9,7 +9,6 @@ import { LayoutDashboard, Moon, Sun, Plus, RefreshCw, Menu, ChevronDown, Chevron
 import { useTheme } from "@/hooks/useTheme";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import BackButton from "@/components/navigation/BackButton";
-import FinanceSummaryPanel from "@/components/reports/FinanceSummaryPanel";
 import { fetchCachedJson, fetchJson, readCachedJson, API_BASE } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cleanTripReference, money, normalizeState, stateLabel } from "@/lib/formatters";
@@ -78,7 +77,6 @@ interface PscnRow {
 const TABS: { id: Tab; label: string }[] = [
   { id: "current-location", label: "Current Location" },
   { id: "location-summary", label: "Location Summary" },
-  { id: "finance-summary", label: "Finance Summary" },
   { id: "daily-profit", label: "Daily Profit" },
   { id: "income-statement", label: "Income Statement" },
   { id: "whatsapp-reports", label: "WhatsApp Reports" },
@@ -1004,6 +1002,7 @@ export default function ReportsPage() {
         onViewChange={(v) => {
           if (v === "overview") { window.location.href = "/"; }
           else if (v === "reports") { window.location.href = "/reports"; }
+          else if (v === "finance") { window.location.href = "/finance"; }
           else if (v === "payments") { window.location.href = "/payments"; }
           else if (v === "map") { window.location.href = "/map"; }
           else { window.location.href = `/?view=${v}`; }
@@ -1070,30 +1069,6 @@ export default function ReportsPage() {
                 <option key={name} value={name}>{name}</option>
               ))}
             </select>
-          )}
-          {tab === "finance-summary" && (
-            <>
-              <select
-                className="fleet-input"
-                style={{ width: "auto", minHeight: 36 }}
-                value={financePeriod}
-                onChange={(e) => setFinancePeriod(e.target.value)}
-              >
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-              <select
-                className="fleet-input"
-                style={{ width: "auto", minHeight: 36 }}
-                value={financeGroupBy}
-                onChange={(e) => setFinanceGroupBy(e.target.value)}
-              >
-                <option value="all">All</option>
-                <option value="supervisor">Assigned Supervisor</option>
-                <option value="vehicle">Vehicle</option>
-              </select>
-            </>
           )}
           {tab === "daily-profit" && (
             <div style={{ display: "flex", gap: 8 }}>
@@ -1595,16 +1570,6 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {/* ── Finance Summary ── */}
-        {tab === "finance-summary" && financeSummary && (
-          <FinanceSummaryPanel
-            summary={financeSummary}
-            period={financePeriod}
-            groupBy={financeGroupBy}
-            onPeriodChange={setFinancePeriod}
-          />
-        )}
-
         {/* ── Daily Profit ── */}
         {tab === "daily-profit" && dailyProfit && (
           <div style={{ display: "grid", gap: 16 }}>
@@ -1714,73 +1679,10 @@ export default function ReportsPage() {
         {tab === "whatsapp-reports" && (
           <div style={{ display: "grid", gap: 24, maxWidth: 800 }}>
             {whatsappSummary?._warning && <div className="login-error">{whatsappSummary._warning}</div>}
-            
-            <div className="panel">
-              <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-                <div className="panel-title">1. Supervisor Payment Requests</div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <select 
-                    className="fleet-input" 
-                    value={whatsappFormat} 
-                    onChange={(e) => setWhatsappFormat(e.target.value)}
-                    style={{ padding: "4px 8px", minHeight: "auto", fontSize: 14 }}
-                  >
-                    <option value="default">Default Text</option>
-                    <option value="table">ASCII Table</option>
-                    <option value="csv">CSV Raw</option>
-                  </select>
-                  <button 
-                    className="fleet-btn fleet-btn-primary" 
-                    onClick={() => void copyWithButtonFeedback(buildPaymentWhatsappText(selectedPaymentRequests()), "copy-pr-btn", "Copy to WhatsApp")}
-                    id="copy-pr-btn"
-                  >
-                    Copy to WhatsApp
-                  </button>
-                </div>
-              </div>
-              <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--background-soft)" }}>
-                <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>Include Requests ({selectedPrIds.length} selected):</div>
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", maxHeight: 150, overflowY: "auto" }}>
-                  {paymentRequests.filter(pr => (pr.total_amount || 0) > 0 && pr.state === "draft").map(pr => (
-                    <label key={pr.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, background: "var(--card)", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border)", cursor: "pointer" }}>
-                      <input 
-                        type="checkbox" 
-                        checked={selectedPrIds.includes(String(pr.id))}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedPrIds([...selectedPrIds, String(pr.id)]);
-                          } else {
-                            setSelectedPrIds(selectedPrIds.filter(id => id !== String(pr.id)));
-                          }
-                        }}
-                      />
-                      {pr.vehicle_plate} ({pr.date?.split("T")[0]})
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <div className="panel-body" style={{ backgroundColor: theme === "dark" ? "#0b141a" : "#efeae2", padding: "32px 24px", borderRadius: "0 0 8px 8px" }}>
-                <div style={{
-                  backgroundColor: theme === "dark" ? "#056162" : "#dcf8c6",
-                  color: theme === "dark" ? "#e9edef" : "#111b21",
-                  padding: "16px 18px",
-                  borderRadius: 12,
-                  borderTopLeftRadius: 4,
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
-                  maxWidth: "95%",
-                  fontFamily: "monospace",
-                  fontSize: 14,
-                  lineHeight: 1.45,
-                  whiteSpace: 'pre-wrap'
-                }}>
-                  {buildPaymentWhatsappText(selectedPaymentRequests())}
-                </div>
-              </div>
-            </div>
 
             <div className="panel">
               <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div className="panel-title">2. Current Location Report</div>
+                <div className="panel-title">Current Location Report</div>
                 <button 
                   className="fleet-btn fleet-btn-primary" 
                   onClick={() => void copyWithButtonFeedback(whatsappSummary?.current_location_text || "", "copy-loc-btn", "Copy to WhatsApp")}
@@ -1808,24 +1710,6 @@ export default function ReportsPage() {
                     {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                   </div>
                 </div>
-              </div>
-            </div>
-
-            <div className="panel">
-              <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div className="panel-title">3. Final Daily Revenue Expense Report</div>
-                <button 
-                  className="fleet-btn fleet-btn-primary" 
-                  onClick={exportDailyProfit}
-                  disabled={!dailyProfit}
-                >
-                  Download Spreadsheet
-                </button>
-              </div>
-              <div className="panel-body">
-                <p className="muted" style={{ margin: 0 }}>
-                  This downloads the Daily Cost and Profit report in CSV format matching the standard spreadsheet layout.
-                </p>
               </div>
             </div>
 

@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   CreditCard,
   FileText,
+  Wallet,
   LogOut,
   Menu,
   Truck,
@@ -22,6 +23,7 @@ export type SidebarView =
   | "payments"
   | "locations"
   | "reports"
+  | "finance"
   | "map"
   | "planner";
 
@@ -105,7 +107,11 @@ export default function Sidebar({ currentView, onViewChange, mobileOpen, onClose
           <CreditCard size={18} />
           {!collapsed && <span className="nav-label">Payment Requests</span>}
         </Link>
-        <Link href="/reports" className="nav-btn" title={collapsed ? "Reports" : undefined}>
+        <Link href="/finance" className={`nav-btn${currentView === "finance" ? " active" : ""}`} title={collapsed ? "Finance Summary" : undefined}>
+          <Wallet size={18} />
+          {!collapsed && <span className="nav-label">Finance Summary</span>}
+        </Link>
+        <Link href="/reports" className={`nav-btn${currentView === "reports" ? " active" : ""}`} title={collapsed ? "Reports" : undefined}>
           <FileText size={18} />
           {!collapsed && <span className="nav-label">Reports</span>}
         </Link>

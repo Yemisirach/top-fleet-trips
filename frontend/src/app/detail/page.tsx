@@ -158,6 +158,7 @@ function DetailContent() {
   const mapLink = `/map?journey_id=${encodeURIComponent(trip.id)}&vehicle=${encodeURIComponent(trip.vehicle_plate || trip.vehicle_id || String(trip.id))}`;
   const nav = (view: SidebarView) => {
     if (view === "overview") window.location.href = "/";
+    else if (view === "finance") window.location.href = "/finance";
     else if (view === "reports") window.location.href = "/reports";
     else if (view === "payments") window.location.href = "/payments";
     else if (view === "map") window.location.href = "/map";

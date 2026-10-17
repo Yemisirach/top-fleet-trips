@@ -54,6 +54,7 @@ const VIEW_META: Record<SidebarView, [string, string]> = {
   map: ["Map", "Live map"],
   planner: ["Overview", "Fleet summary and recent activity"],
   reports: ["Reports", "Financial and operational reports"],
+  finance: ["Finance Summary", "Daily, weekly, and monthly posted profit"],
 };
 
 function getInitialDashboardState(): { view: SidebarView; status: string } {
@@ -216,6 +217,7 @@ export default function DashboardPage() {
 
   const handleViewChange = useCallback((v: SidebarView, status?: string) => {
     if (v === "overview") { router.push("/"); setView("overview"); setStatusFilter("all"); setMobileSidebarOpen(false); return; }
+    if (v === "finance" || v === ("finance" as string)) { router.push("/finance"); return; }
     if (v === "reports" || v === ("reports" as string)) { router.push("/reports"); return; }
     if (v === "payments" || v === ("payments" as string)) { router.push("/payments"); return; }
     if (v === "map" || v === ("map" as string)) { router.push("/map"); return; }
@@ -227,6 +229,7 @@ export default function DashboardPage() {
 
   const handleOpenView = useCallback((v: string, status?: string) => {
     if (v === "overview") { router.push("/"); setView("overview"); setStatusFilter("all"); return; }
+    if (v === "finance") { router.push("/finance"); return; }
     if (v === "reports") { router.push("/reports"); return; }
     if (v === "map") { router.push("/map"); return; }
     if (v === "payments") { router.push("/payments"); return; }
