@@ -20,6 +20,12 @@ def _as_float(value) -> float:
     return float(value or 0)
 
 
+def _date_text(value) -> Optional[str]:
+    if not value:
+        return None
+    return str(value)[:10]
+
+
 def _location_sort_key(name: str, count: int = 0):
     normalized = (name or "Unknown").strip().lower()
     return (normalized == "unknown", -count, normalized)
@@ -228,7 +234,7 @@ async def _table_columns(db: AsyncSession, table_name: str) -> set[str]:
 
 @router.get("/current-location")
 async def current_location_report(db: AsyncSession = Depends(get_session)) -> list[dict]:
-    cache_key = "fleet:reports:current-location"
+    cache_key = "fleet:reports:current-location:v2"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -246,8 +252,12 @@ async def current_location_report(db: AsyncSession = Depends(get_session)) -> li
             "destination_name": row.get("destination_name"),
             "current_location_name": row.get("current_location_name") or row.get("location_name"),
             "current_location_note": row.get("current_location_note"),
-            "departure_date": str(row.get("departure_date")) if row.get("departure_date") else None,
-            "arrival_date": str(row.get("arrival_date")) if row.get("arrival_date") else None,
+            "departure_date": _date_text(row.get("departure_date")),
+            "arrival_date": _date_text(row.get("arrival_date")),
+            "write_date": _date_text(row.get("write_date")),
+            "create_date": _date_text(row.get("create_date")),
+            "days_as_of": _date_text(row.get("days_as_of")),
+            "days_basis": row.get("days_basis") or "none",
             "state": row.get("state") or "available",
             "current_location_days": row.get("current_location_days") or 0,
         }
@@ -259,7 +269,7 @@ async def current_location_report(db: AsyncSession = Depends(get_session)) -> li
 
 @router.get("/current-location-summary")
 async def current_location_summary_report(db: AsyncSession = Depends(get_session)) -> dict:
-    cache_key = "fleet:reports:current-location-summary"
+    cache_key = "fleet:reports:current-location-summary:v2"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -278,7 +288,12 @@ async def current_location_summary_report(db: AsyncSession = Depends(get_session
             "state": row.get("state") or "available",
             "destination_name": row.get("destination_name"),
             "current_location_note": row.get("current_location_note"),
-            "departure_date": str(row.get("departure_date")) if row.get("departure_date") else None,
+            "departure_date": _date_text(row.get("departure_date")),
+            "arrival_date": _date_text(row.get("arrival_date")),
+            "write_date": _date_text(row.get("write_date")),
+            "create_date": _date_text(row.get("create_date")),
+            "days_as_of": _date_text(row.get("days_as_of")),
+            "days_basis": row.get("days_basis") or "none",
             "days": row.get("current_location_days") or 0,
         })
     locations = [

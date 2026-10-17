@@ -124,6 +124,10 @@ export interface LocationRow {
   current_location_note?: string;
   departure_date?: string;
   arrival_date?: string;
+  write_date?: string;
+  create_date?: string;
+  days_as_of?: string;
+  days_basis?: "arrival" | "departure" | "write" | "create" | "none" | string;
   state?: string;
   current_location_days?: number;
   days?: number;

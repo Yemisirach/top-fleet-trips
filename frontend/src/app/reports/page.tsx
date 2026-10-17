@@ -9,6 +9,7 @@ import { LayoutDashboard, Moon, Sun, Plus, RefreshCw, Menu, ChevronDown, Chevron
 import { useTheme } from "@/hooks/useTheme";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import BackButton from "@/components/navigation/BackButton";
+import LocationDaysDetail from "@/components/reports/LocationDaysDetail";
 import { fetchCachedJson, fetchJson, readCachedJson, API_BASE } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cleanTripReference, money, normalizeState, stateLabel } from "@/lib/formatters";
@@ -114,6 +115,8 @@ export default function ReportsPage() {
   const [selectedLocation, setSelectedLocation] = useState("all");
   const [selectedPrIds, setSelectedPrIds] = useState<string[]>([]);
   const [expandedPaymentIds, setExpandedPaymentIds] = useState<string[]>([]);
+  const [expandedLocationNames, setExpandedLocationNames] = useState<string[]>([]);
+  const [expandedLocationRows, setExpandedLocationRows] = useState<string[]>([]);
   const [editingPrId, setEditingPrId] = useState<string | null>(null);
 
   // New payment request form
@@ -567,7 +570,7 @@ export default function ReportsPage() {
     if (t === "current-location") {
       showCached<LocationRow[]>("reports:current-location-supervised-v2", setLocationRows);
     } else if (t === "location-summary") {
-      showCached<LocationSummary>("reports:current-location-summary-supervised-v2", setLocationSummary);
+      showCached<LocationSummary>("reports:current-location-summary-supervised-v3", setLocationSummary);
     } else if (t === "payment-requests") {
       showCached<PaymentRequest[]>(PAYMENT_REQUESTS_CACHE_KEY, setPaymentRequests);
     } else if (t === "finance-summary") {
@@ -590,7 +593,7 @@ export default function ReportsPage() {
         const rows = await fetchCachedJson<LocationRow[]>(`${API_BASE}/reports/current-location`, undefined, { ttlMs: 600_000, cacheKey: "reports:current-location-supervised-v2", forceRefresh: force });
         setLocationRows(rows);
       } else if (t === "location-summary") {
-        const data = await fetchCachedJson<LocationSummary>(`${API_BASE}/reports/current-location-summary`, undefined, { ttlMs: 600_000, cacheKey: "reports:current-location-summary-supervised-v2", forceRefresh: force });
+        const data = await fetchCachedJson<LocationSummary>(`${API_BASE}/reports/current-location-summary`, undefined, { ttlMs: 600_000, cacheKey: "reports:current-location-summary-supervised-v3", forceRefresh: force });
         setLocationSummary(data);
       } else if (t === "payment-requests") {
         const rows = await fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, { ttlMs: 600_000, cacheKey: PAYMENT_REQUESTS_CACHE_KEY, forceRefresh: force });
@@ -1161,35 +1164,64 @@ export default function ReportsPage() {
               <div className="card"><div className="card-label">Total Locations</div><div className="card-value">{locationSummary.total_locations}</div></div>
               <div className="card"><div className="card-label">Total Vehicles</div><div className="card-value">{locationSummary.total_vehicles}</div></div>
             </div>
-            {(filterRows(locationSummary.locations as unknown as Record<string, unknown>[]) as unknown as LocationSummaryGroup[]).map((loc) => (
-              <div key={loc.location_name} className="panel">
-                <div className="panel-header">
-                  <div className="panel-title">{loc.location_name}</div>
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>Click a location to open its vehicles. Click a vehicle to see how days is calculated.</p>
+            {(filterRows(locationSummary.locations as unknown as Record<string, unknown>[]) as unknown as LocationSummaryGroup[]).map((loc) => {
+              const locationOpen = expandedLocationNames.includes(loc.location_name);
+              return (
+              <div key={loc.location_name} className={`panel${locationOpen ? " selected" : ""}`}>
+                <button
+                  type="button"
+                  className="panel-header"
+                  onClick={() => setExpandedLocationNames((current) => current.includes(loc.location_name) ? current.filter((name) => name !== loc.location_name) : [...current, loc.location_name])}
+                  aria-expanded={locationOpen}
+                  style={{ width: "100%", border: 0, background: "transparent", color: "inherit", font: "inherit", cursor: "pointer", textAlign: "left" }}
+                >
+                  <div className="panel-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {locationOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    {loc.location_name}
+                  </div>
                   <span className="muted" style={{ fontSize: 13 }}>{loc.vehicle_count} vehicle{loc.vehicle_count === 1 ? "" : "s"}</span>
-                </div>
+                </button>
+                {locationOpen && (
                 <div style={{ overflowX: "auto" }}>
                   <table className="fleet-table" style={{ fontStyle: 'normal' }}>
                     <thead>
-                      <tr>{["Vehicle", "Supervisor", "Driver", "Destination", "DB Note", "Dep. Date", "State", "Days"].map((h) => <th key={h}>{h}</th>)}</tr>
+                      <tr>{["", "Vehicle", "Supervisor", "Driver", "Destination", "DB Note", "Dep. Date", "State", "Days"].map((h) => <th key={h || "expand"}>{h}</th>)}</tr>
                     </thead>
                     <tbody>
-                      {loc.vehicles.map((v, i) => (
-                        <tr key={i}>
-                          <td>{v.vehicle_plate || "N/A"}</td>
-                          <td>{v.supervisor_name || "Unassigned"}</td>
-                          <td>{v.driver_name || "Unassigned"}</td>
-                          <td>{v.destination_name || "–"}</td>
-                          <td className="gps-note-cell">{compactGpsNote(v.current_location_note)}</td>
-                          <td className="location-date-cell">{v.departure_date || "–"}</td>
-                          <td><span className={`pill ${normalizeState(v.state)}`}>{stateLabel(v.state)}</span></td>
-                          <td>{v.current_location_days ?? v.days ?? 0}</td>
-                        </tr>
-                      ))}
+                      {loc.vehicles.map((v, i) => {
+                        const rowKey = `${loc.location_name}:${v.vehicle_id || v.vehicle_plate || i}`;
+                        const rowOpen = expandedLocationRows.includes(rowKey);
+                        return (
+                          <Fragment key={rowKey}>
+                            <tr className={`payment-clickable-row${rowOpen ? " expanded" : ""}`} onClick={() => setExpandedLocationRows((current) => current.includes(rowKey) ? current.filter((key) => key !== rowKey) : [...current, rowKey])}>
+                              <td>{rowOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</td>
+                              <td>{v.vehicle_plate || "N/A"}</td>
+                              <td>{v.supervisor_name || "Unassigned"}</td>
+                              <td>{v.driver_name || "Unassigned"}</td>
+                              <td>{v.destination_name || "–"}</td>
+                              <td className="gps-note-cell">{compactGpsNote(v.current_location_note)}</td>
+                              <td className="location-date-cell">{v.departure_date || "–"}</td>
+                              <td><span className={`pill ${normalizeState(v.state)}`}>{stateLabel(v.state)}</span></td>
+                              <td>{v.current_location_days ?? v.days ?? 0}</td>
+                            </tr>
+                            {rowOpen && (
+                              <tr>
+                                <td colSpan={9} style={{ background: "var(--panel-2)", padding: 12 }}>
+                                  <LocationDaysDetail row={v} />
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

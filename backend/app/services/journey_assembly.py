@@ -212,6 +212,14 @@ VEHICLE_LOCATION_QUERY = """
             departure.name,
             'Unknown'
         ) AS location_name,
+        CURRENT_DATE AS days_as_of,
+        CASE
+            WHEN latest_trip.arrival_date IS NOT NULL THEN 'arrival'
+            WHEN latest_trip.departure_date IS NOT NULL THEN 'departure'
+            WHEN latest_trip.write_date IS NOT NULL THEN 'write'
+            WHEN latest_trip.create_date IS NOT NULL THEN 'create'
+            ELSE 'none'
+        END AS days_basis,
         CASE
             WHEN COALESCE(
                 latest_trip.arrival_date,

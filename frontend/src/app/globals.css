@@ -2943,6 +2943,21 @@ html.dark .leaflet-tile { filter: brightness(0.8) invert(0.15); }
   }
 }
 
+.location-days-detail { display: grid; gap: 8px; max-width: 760px; }
+.location-days-detail p { margin: 0; color: var(--text); font-size: 13px; line-height: 1.45; }
+.location-days-dates { display: flex; gap: 8px; flex-wrap: wrap; }
+.location-days-dates span {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.location-days-dates span.used {
+  border-color: var(--primary);
+  color: var(--text);
+  font-weight: 700;
+}
 .finance-page { display: grid; gap: 16px; }
 .finance-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
 .finance-toolbar .fleet-input { width: auto; min-height: 36px; }
