@@ -94,20 +94,25 @@ function TripList({
   details,
   openTripId,
   onToggleTrip,
+  pinPlate = false,
 }: {
   trips: FinanceTrip[];
   details: Record<number, LoadState<FinanceTripDetail>>;
   openTripId: number | null;
   onToggleTrip: (tripId: number) => void;
+  pinPlate?: boolean;
 }) {
   if (trips.length === 0) return <div className="finance-empty">No trips in this total.</div>;
+  const plateClass = pinPlate ? "finance-identity finance-plate" : "";
   return (
+    <div className={pinPlate ? "finance-table-wrap" : undefined}>
     <table className="finance-table finance-trip-table">
       <thead>
         <tr>
-          <th></th>
+          <th className={pinPlate ? "finance-pin" : ""}></th>
+          {pinPlate && <th className={plateClass}>Plate</th>}
           <th>Trip</th>
-          <th>Plate</th>
+          {!pinPlate && <th>Plate</th>}
           <th>Route</th>
           <th className="num">Revenue</th>
           <th className="num">Cost</th>
@@ -121,12 +126,13 @@ function TripList({
           return (
             <Fragment key={trip.trip_id}>
               <tr className={open ? "selected" : ""} onClick={() => onToggleTrip(trip.trip_id)}>
-                <td className="finance-chevron">{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</td>
+                <td className={`${pinPlate ? "finance-pin " : ""}finance-chevron`}>{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</td>
+                {pinPlate && <td className={plateClass}><strong>{trip.plate_number}</strong></td>}
                 <td>
                   <strong>{trip.trip_name}</strong>
                   <span className="finance-sub">{trip.trip_day} · {trip.driver_name}</span>
                 </td>
-                <td>{trip.plate_number}</td>
+                {!pinPlate && <td>{trip.plate_number}</td>}
                 <td>{trip.route || "—"}</td>
                 <td className="num green">{trip.receivable_posted ? money(trip.revenue_total) : "—"}</td>
                 <td className="num">{money(trip.cost_total)}</td>
@@ -148,6 +154,7 @@ function TripList({
         })}
       </tbody>
     </table>
+    </div>
   );
 }
 
@@ -256,7 +263,8 @@ export default function FinanceSummaryPanel() {
   };
 
   const cardTrips = openCard ? tripLists[`card:${openCard}`] : undefined;
-  const groupHeading = groupBy === "supervisor" ? "Assigned supervisor" : groupBy === "vehicle" ? "Vehicle" : "";
+  const groupHeading = groupBy === "supervisor" ? "Assigned supervisor" : groupBy === "vehicle" ? "Plate" : "";
+  const identityClass = groupBy === "vehicle" ? "finance-identity finance-plate" : "finance-identity";
   const sectionTitle = groupHeading ? `${periodTitle(period)} by ${groupHeading.toLowerCase()}` : `${periodTitle(period)} totals`;
   const groupedPeriods = (summary?.periods || []).reduce<Array<{ date: string; rows: FinancePeriod[] }>>((groups, row) => {
     const last = groups[groups.length - 1];
@@ -304,7 +312,7 @@ export default function FinanceSummaryPanel() {
           {cardTrips?.status === "loading" && <div className="muted">Loading trips…</div>}
           {cardTrips?.status === "error" && <div className="login-error">{cardTrips.error}</div>}
           {cardTrips?.status === "ready" && (
-            <TripList trips={cardTrips.data || []} details={details} openTripId={openTripId} onToggleTrip={toggleTrip} />
+            <TripList trips={cardTrips.data || []} details={details} openTripId={openTripId} onToggleTrip={toggleTrip} pinPlate={groupBy === "vehicle"} />
           )}
         </section>
       )}
@@ -322,7 +330,7 @@ export default function FinanceSummaryPanel() {
               <thead>
                 <tr>
                   <th className="finance-pin"></th>
-                  <th className="finance-identity">{groupHeading || "Period"}</th>
+                  <th className={identityClass}>{groupHeading || "Period"}</th>
                   <th className="num">Trips</th>
                   <th className="num">Revenue</th>
                   <th className="num">Cost</th>
@@ -336,7 +344,7 @@ export default function FinanceSummaryPanel() {
                     {groupBy !== "all" && (
                       <tr className="finance-date-band">
                         <td className="finance-pin"></td>
-                        <td className="finance-identity">{group.date}</td>
+                        <td className={identityClass}>{group.date}</td>
                         <td colSpan={5}></td>
                       </tr>
                     )}
@@ -348,7 +356,7 @@ export default function FinanceSummaryPanel() {
                         <Fragment key={key}>
                           <tr className={open ? "selected" : ""} onClick={() => toggleLine(row)}>
                             <td className="finance-pin finance-chevron">{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</td>
-                            <td className="finance-identity">
+                            <td className={identityClass}>
                               <strong>{groupBy === "all" ? row.period_start : (row.group_label || "Unassigned")}</strong>
                             </td>
                             <td className="num">{row.trip_count}</td>
@@ -363,7 +371,7 @@ export default function FinanceSummaryPanel() {
                                 {loaded?.status === "loading" && <div className="muted">Loading trips…</div>}
                                 {loaded?.status === "error" && <div className="login-error">{loaded.error}</div>}
                                 {loaded?.status === "ready" && (
-                                  <TripList trips={loaded.data || []} details={details} openTripId={openTripId} onToggleTrip={toggleTrip} />
+                                  <TripList trips={loaded.data || []} details={details} openTripId={openTripId} onToggleTrip={toggleTrip} pinPlate={groupBy === "vehicle"} />
                                 )}
                               </td>
                             </tr>

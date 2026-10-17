@@ -3026,6 +3026,13 @@ html.dark .leaflet-tile { filter: brightness(0.8) invert(0.15); }
   box-shadow: 8px 0 10px -8px color-mix(in srgb, var(--text) 35%, transparent);
 }
 .finance-table .finance-identity strong { display: block; line-height: 1.25; }
+.finance-table .finance-plate {
+  min-width: 132px;
+  max-width: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
 .finance-table thead .finance-pin,
 .finance-table thead .finance-identity {
   z-index: 4;
