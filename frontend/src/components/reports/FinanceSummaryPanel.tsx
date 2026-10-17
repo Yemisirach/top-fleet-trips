@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { fetchCachedJson, fetchJson, API_BASE } from "@/lib/api";
 import { money } from "@/lib/formatters";
@@ -11,14 +11,9 @@ type LoadState<T> = { status: "loading" | "ready" | "error"; data?: T; error?: s
 const rangeLabel = (card: FinanceCard) =>
   card.period_start === card.period_end ? card.period_start : `${card.period_start} to ${card.period_end}`;
 
-function Metric({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="finance-metric">
-      <span>{label}</span>
-      <strong className={tone}>{value}</strong>
-    </div>
-  );
-}
+const signedClass = (value: number) => (value > 0 ? "green" : value < 0 ? "red" : "");
+
+const periodTitle = (period: string) => (period === "daily" ? "Daily" : period === "weekly" ? "Weekly" : "Monthly");
 
 function TripDetailView({ detail }: { detail: FinanceTripDetail }) {
   const counted = detail.cost_source === "expense_lines" ? "trip expense lines" : "the trip payment request";
@@ -105,43 +100,54 @@ function TripList({
   openTripId: number | null;
   onToggleTrip: (tripId: number) => void;
 }) {
-  if (trips.length === 0) return <div className="muted">No trips in this total.</div>;
+  if (trips.length === 0) return <div className="finance-empty">No trips in this total.</div>;
   return (
-    <div className="finance-trip-list">
-      {trips.map((trip) => {
-        const open = openTripId === trip.trip_id;
-        const detail = details[trip.trip_id];
-        return (
-          <article key={trip.trip_id} className={`finance-trip${open ? " selected" : ""}`}>
-            <button type="button" className="finance-trip-main" onClick={() => onToggleTrip(trip.trip_id)} aria-expanded={open}>
-              <span className="finance-chevron" aria-hidden="true">
-                {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              </span>
-              <span className="finance-trip-name">
-                <strong>{trip.trip_name}</strong>
-                <span>{trip.trip_day} · {trip.driver_name}</span>
-              </span>
-              <span className="finance-trip-meta">{trip.plate_number}</span>
-              <span className="finance-trip-route">{trip.route || "—"}</span>
-              <Metric label="Revenue" value={trip.receivable_posted ? money(trip.revenue_total) : "—"} tone="green" />
-              <Metric label="Cost" value={money(trip.cost_total)} />
-              <Metric
-                label="Result"
-                value={trip.receivable_posted ? money(trip.profit) : "Waiting"}
-                tone={trip.receivable_posted ? (trip.profit >= 0 ? "green" : "red") : ""}
-              />
-            </button>
-            {open && (
-              <div className="finance-child">
-                {detail?.status === "loading" && <div className="muted">Loading how this trip was calculated…</div>}
-                {detail?.status === "error" && <div className="login-error">{detail.error}</div>}
-                {detail?.status === "ready" && detail.data && <TripDetailView detail={detail.data} />}
-              </div>
-            )}
-          </article>
-        );
-      })}
-    </div>
+    <table className="finance-table finance-trip-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Trip</th>
+          <th>Plate</th>
+          <th>Route</th>
+          <th className="num">Revenue</th>
+          <th className="num">Cost</th>
+          <th className="num">Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {trips.map((trip) => {
+          const open = openTripId === trip.trip_id;
+          const detail = details[trip.trip_id];
+          return (
+            <Fragment key={trip.trip_id}>
+              <tr className={open ? "selected" : ""} onClick={() => onToggleTrip(trip.trip_id)}>
+                <td className="finance-chevron">{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</td>
+                <td>
+                  <strong>{trip.trip_name}</strong>
+                  <span className="finance-sub">{trip.trip_day} · {trip.driver_name}</span>
+                </td>
+                <td>{trip.plate_number}</td>
+                <td>{trip.route || "—"}</td>
+                <td className="num green">{trip.receivable_posted ? money(trip.revenue_total) : "—"}</td>
+                <td className="num">{money(trip.cost_total)}</td>
+                <td className={`num ${trip.receivable_posted ? signedClass(trip.profit) : ""}`}>
+                  {trip.receivable_posted ? money(trip.profit) : "Waiting"}
+                </td>
+              </tr>
+              {open && (
+                <tr className="finance-detail-row">
+                  <td colSpan={7}>
+                    {detail?.status === "loading" && <div className="muted">Loading how this trip was calculated…</div>}
+                    {detail?.status === "error" && <div className="login-error">{detail.error}</div>}
+                    {detail?.status === "ready" && detail.data && <TripDetailView detail={detail.data} />}
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -250,6 +256,14 @@ export default function FinanceSummaryPanel() {
   };
 
   const cardTrips = openCard ? tripLists[`card:${openCard}`] : undefined;
+  const groupHeading = groupBy === "supervisor" ? "Assigned supervisor" : groupBy === "vehicle" ? "Vehicle" : "";
+  const sectionTitle = groupHeading ? `${periodTitle(period)} by ${groupHeading.toLowerCase()}` : `${periodTitle(period)} totals`;
+  const groupedPeriods = (summary?.periods || []).reduce<Array<{ date: string; rows: FinancePeriod[] }>>((groups, row) => {
+    const last = groups[groups.length - 1];
+    if (!last || last.date !== row.period_start) groups.push({ date: row.period_start, rows: [row] });
+    else last.rows.push(row);
+    return groups;
+  }, []);
 
   return (
     <div className="finance-page">
@@ -264,23 +278,22 @@ export default function FinanceSummaryPanel() {
           <option value="supervisor">Assigned Supervisor</option>
           <option value="vehicle">Vehicle</option>
         </select>
+        <p className="finance-help">Click a card or a row to open the trips.</p>
       </div>
-      <p className="finance-help">
-        The bar marks the selected card or line. Trips open underneath it. Open a trip to see the receivable and the cost that made the number.
-      </p>
       {(summary?._warning || summaryError) && <div className="login-error">{summary?._warning || summaryError}</div>}
       <div className="finance-cards">
         {(cards?.cards || []).map((card) => {
           const open = openCard === card.key;
+          const active = open || period === card.key;
           return (
-            <button key={card.key} type="button" className={`card finance-card${open ? " selected" : ""}`} onClick={() => toggleCard(card)} aria-expanded={open}>
+            <button key={card.key} type="button" className={`finance-card${active ? " selected" : ""}${open ? " open" : ""}`} onClick={() => toggleCard(card)} aria-expanded={open}>
               <div className="finance-card-top">
-                <div className="card-label">{card.label}</div>
-                {open && <span className="finance-selected-chip">Selected</span>}
+                <span>{card.label}</span>
+                {open && <em>Open</em>}
               </div>
-              <div className={`card-value ${card.profit >= 0 ? "green" : "red"}`}>{money(card.profit)}</div>
-              <div className="muted finance-card-sub">{rangeLabel(card)} · {card.trip_count} trips</div>
-              {card.pending_cost > 0 && <div className="muted finance-card-sub">Waiting {money(card.pending_cost)}</div>}
+              <strong className={signedClass(card.profit)}>{money(card.profit)}</strong>
+              <small>{rangeLabel(card)} · {card.trip_count} trips</small>
+              <small>{card.pending_cost > 0 ? `Waiting ${money(card.pending_cost)}` : "No waiting receivable"}</small>
             </button>
           );
         })}
@@ -295,50 +308,73 @@ export default function FinanceSummaryPanel() {
           )}
         </section>
       )}
-      <section className="panel finance-lines">
+      <section className="panel finance-sheet">
         <div className="panel-header">
-          <div className="panel-title">
-            By {period.charAt(0).toUpperCase() + period.slice(1)}
-            {groupBy !== "all" ? ` / ${groupBy === "supervisor" ? "Assigned Supervisor" : "Vehicle"}` : ""}
+          <div>
+            <div className="panel-title">{sectionTitle}</div>
+            <div className="finance-sheet-note">Posted profit only. Waiting is not a loss.</div>
           </div>
         </div>
         {!summary && !summaryError && <div className="muted" style={{ padding: 16 }}>Loading periods…</div>}
-        {summary?.periods.map((row) => {
-          const key = lineKey(row);
-          const open = openLine === key;
-          const loaded = tripLists[key];
-          return (
-            <div key={key} className={`finance-line-wrap${open ? " selected" : ""}`}>
-              <button type="button" className="finance-line" onClick={() => toggleLine(row)} aria-expanded={open}>
-                <span className="finance-chevron" aria-hidden="true">
-                  {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                </span>
-                <span className="finance-line-title">
-                  <strong>{row.period_start}</strong>
-                  {groupBy !== "all" && <span>{row.group_label || "Unassigned"}</span>}
-                  {open && <em>Selected</em>}
-                </span>
-                <span className="finance-line-metrics">
-                  <Metric label="Trips" value={String(row.trip_count)} />
-                  <Metric label="Revenue" value={money(row.revenue_total)} tone="green" />
-                  <Metric label="Cost" value={money(row.expense_total)} tone="red" />
-                  <Metric label="Posted profit" value={money(row.profit)} tone={row.profit >= 0 ? "green" : "red"} />
-                  <Metric label="Waiting" value={(row.pending_cost || 0) > 0 ? money(row.pending_cost || 0) : "—"} />
-                </span>
-              </button>
-              {open && (
-                <div className="finance-child">
-                  <div className="finance-child-label">Trips in this line</div>
-                  {loaded?.status === "loading" && <div className="muted">Loading trips…</div>}
-                  {loaded?.status === "error" && <div className="login-error">{loaded.error}</div>}
-                  {loaded?.status === "ready" && (
-                    <TripList trips={loaded.data || []} details={details} openTripId={openTripId} onToggleTrip={toggleTrip} />
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {summary && (
+          <div className="finance-table-wrap">
+            <table className="finance-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>{groupHeading || "Period"}</th>
+                  <th className="num">Trips</th>
+                  <th className="num">Revenue</th>
+                  <th className="num">Cost</th>
+                  <th className="num">Posted profit</th>
+                  <th className="num">Waiting</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupedPeriods.map((group) => (
+                  <Fragment key={group.date}>
+                    {groupBy !== "all" && (
+                      <tr className="finance-date-band">
+                        <td colSpan={7}>{group.date}</td>
+                      </tr>
+                    )}
+                    {group.rows.map((row) => {
+                      const key = lineKey(row);
+                      const open = openLine === key;
+                      const loaded = tripLists[key];
+                      return (
+                        <Fragment key={key}>
+                          <tr className={open ? "selected" : ""} onClick={() => toggleLine(row)}>
+                            <td className="finance-chevron">{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</td>
+                            <td>
+                              <strong>{groupBy === "all" ? row.period_start : (row.group_label || "Unassigned")}</strong>
+                            </td>
+                            <td className="num">{row.trip_count}</td>
+                            <td className={`num ${row.revenue_total ? "green" : ""}`}>{money(row.revenue_total)}</td>
+                            <td className={`num ${row.expense_total ? "red" : ""}`}>{money(row.expense_total)}</td>
+                            <td className={`num ${signedClass(row.profit)}`}>{money(row.profit)}</td>
+                            <td className="num">{(row.pending_cost || 0) > 0 ? money(row.pending_cost || 0) : "—"}</td>
+                          </tr>
+                          {open && (
+                            <tr className="finance-detail-row">
+                              <td colSpan={7}>
+                                {loaded?.status === "loading" && <div className="muted">Loading trips…</div>}
+                                {loaded?.status === "error" && <div className="login-error">{loaded.error}</div>}
+                                {loaded?.status === "ready" && (
+                                  <TripList trips={loaded.data || []} details={details} openTripId={openTripId} onToggleTrip={toggleTrip} />
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );
