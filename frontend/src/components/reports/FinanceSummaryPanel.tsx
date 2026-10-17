@@ -321,8 +321,8 @@ export default function FinanceSummaryPanel() {
             <table className="finance-table">
               <thead>
                 <tr>
-                  <th></th>
-                  <th>{groupHeading || "Period"}</th>
+                  <th className="finance-pin"></th>
+                  <th className="finance-identity">{groupHeading || "Period"}</th>
                   <th className="num">Trips</th>
                   <th className="num">Revenue</th>
                   <th className="num">Cost</th>
@@ -335,7 +335,9 @@ export default function FinanceSummaryPanel() {
                   <Fragment key={group.date}>
                     {groupBy !== "all" && (
                       <tr className="finance-date-band">
-                        <td colSpan={7}>{group.date}</td>
+                        <td className="finance-pin"></td>
+                        <td className="finance-identity">{group.date}</td>
+                        <td colSpan={5}></td>
                       </tr>
                     )}
                     {group.rows.map((row) => {
@@ -345,8 +347,8 @@ export default function FinanceSummaryPanel() {
                       return (
                         <Fragment key={key}>
                           <tr className={open ? "selected" : ""} onClick={() => toggleLine(row)}>
-                            <td className="finance-chevron">{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</td>
-                            <td>
+                            <td className="finance-pin finance-chevron">{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</td>
+                            <td className="finance-identity">
                               <strong>{groupBy === "all" ? row.period_start : (row.group_label || "Unassigned")}</strong>
                             </td>
                             <td className="num">{row.trip_count}</td>
