@@ -9,7 +9,7 @@ import { LayoutDashboard, Moon, Sun, Plus, RefreshCw, Menu, ChevronDown, Chevron
 import { useTheme } from "@/hooks/useTheme";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import BackButton from "@/components/navigation/BackButton";
-import GpsLocationList from "@/components/reports/GpsLocationList";
+import GpsLocationList, { type GpsPlace } from "@/components/reports/GpsLocationList";
 import LocationDaysDetail from "@/components/reports/LocationDaysDetail";
 import { fetchCachedJson, fetchJson, readCachedJson, API_BASE } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
@@ -102,6 +102,8 @@ export default function ReportsPage() {
   const [locationSummary, setLocationSummary] = useState<LocationSummary | null>(null);
   const [locationView, setLocationView] = useState<LocationView>("summary");
   const [gpsVehicles, setGpsVehicles] = useState<MayetVehicle[]>([]);
+  const [gpsPlaces, setGpsPlaces] = useState<GpsPlace[]>([]);
+  const [gpsPlacesPending, setGpsPlacesPending] = useState(0);
   const [gpsError, setGpsError] = useState("");
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [financeSummary, setFinanceSummary] = useState<FinanceSummary | null>(null);
@@ -726,6 +728,30 @@ export default function ReportsPage() {
     return () => { cancelled = true; };
   }, [tab, locationView]);
 
+  useEffect(() => {
+    if (tab !== "location-summary" || locationView !== "gps") return;
+    let cancelled = false;
+    let timer = 0;
+    const loadPlaces = () => {
+      fetchJson<{ places?: GpsPlace[]; pending?: number }>(`${API_BASE}/dashboard/gps-places`)
+        .then((data) => {
+          if (cancelled) return;
+          const pending = data.pending || 0;
+          setGpsPlaces(Array.isArray(data.places) ? data.places : []);
+          setGpsPlacesPending(pending);
+          if (pending > 0) timer = window.setTimeout(loadPlaces, 4000);
+        })
+        .catch(() => {
+          if (!cancelled) setGpsPlacesPending(0);
+        });
+    };
+    loadPlaces();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [tab, locationView]);
+
 
   const handleTabChange = (t: Tab) => {
     setTab(t);
@@ -991,7 +1017,7 @@ export default function ReportsPage() {
         <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--line)", background: "var(--panel)", display: "flex", gap: 10, alignItems: "center" }}>
           <input
             className="fleet-input"
-            placeholder="Filter rows…"
+            placeholder={locationView === "gps" && tab === "location-summary" ? "Search plate, driver, place, destination…" : "Filter rows…"}
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
             style={{ maxWidth: 320, minHeight: 36 }}
@@ -1054,8 +1080,10 @@ export default function ReportsPage() {
             </div>
             {locationView === "gps" ? (
               <GpsLocationList
-                trips={(filterRows(locationSummary.locations as unknown as Record<string, unknown>[]) as unknown as LocationSummaryGroup[]).flatMap((group) => group.vehicles)}
+                trips={locationSummary.locations.flatMap((group) => group.vehicles)}
                 gpsVehicles={gpsVehicles}
+                places={gpsPlaces}
+                query={filterText}
                 error={gpsError}
               />
             ) : (

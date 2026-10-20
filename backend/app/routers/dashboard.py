@@ -29,6 +29,8 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 router = APIRouter()
 settings = get_settings()
 _reverse_geocode_cache: dict[str, str] = {}
+_place_name_cache: dict[str, dict] = {}
+_place_fill_task: Optional[asyncio.Task] = None
 
 
 def _as_float(value) -> float:
@@ -225,6 +227,135 @@ def _gps_location_display(gps: Optional[dict]) -> Optional[str]:
     return None
 
 
+def _geocode_key(latitude, longitude) -> Optional[str]:
+    try:
+        lat = float(latitude)
+        lon = float(longitude)
+    except (TypeError, ValueError):
+        return None
+    if not lat and not lon:
+        return None
+    return f"fleet:geocode:v1:{lat:.4f},{lon:.4f}"
+
+
+def _short_place_name(address: Optional[dict], display_name: str) -> str:
+    if isinstance(address, dict):
+        locality = (
+            address.get("city")
+            or address.get("town")
+            or address.get("village")
+            or address.get("municipality")
+            or address.get("state")
+        )
+        area = address.get("suburb") or address.get("neighbourhood") or address.get("quarter") or address.get("road")
+        parts = [str(part).strip() for part in (area, locality) if part]
+        if parts:
+            return ", ".join(parts[:2])
+    parts = [part.strip() for part in str(display_name or "").split(",") if part.strip()]
+    return ", ".join(parts[:2])
+
+
+def _reverse_geocode_place_sync(latitude, longitude) -> Optional[dict]:
+    try:
+        lat = float(latitude)
+        lon = float(longitude)
+    except (TypeError, ValueError):
+        return None
+    key = _geocode_key(lat, lon)
+    if not key:
+        return None
+    if key in _place_name_cache:
+        return _place_name_cache[key]
+
+    query = urllib.parse.urlencode({
+        "format": "jsonv2",
+        "lat": f"{lat:.6f}",
+        "lon": f"{lon:.6f}",
+        "zoom": "14",
+        "addressdetails": "1",
+    })
+    request = urllib.request.Request(
+        f"https://nominatim.openstreetmap.org/reverse?{query}",
+        headers={"User-Agent": "FleetTrips/1.0 (gps-location-display)"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=6) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    display_name = str(payload.get("display_name") or "").strip()
+    if not display_name:
+        return None
+    place = {
+        "short_name": _short_place_name(payload.get("address") if isinstance(payload.get("address"), dict) else None, display_name),
+        "full_name": display_name,
+    }
+    _place_name_cache[key] = place
+    _reverse_geocode_cache[f"{lat:.5f},{lon:.5f}"] = display_name
+    return place
+
+
+def _read_cached_place(latitude, longitude) -> Optional[dict]:
+    key = _geocode_key(latitude, longitude)
+    if not key:
+        return None
+    if key in _place_name_cache:
+        return _place_name_cache[key]
+    if redis_client is None:
+        return None
+    try:
+        redis = redis_client.Redis.from_url(settings.redis_url, decode_responses=True)
+        raw = redis.get(key)
+        if not raw:
+            return None
+        data = json.loads(raw)
+        if isinstance(data, dict) and data.get("short_name"):
+            _place_name_cache[key] = data
+            return data
+    except Exception:
+        return None
+    return None
+
+
+def _store_cached_place(latitude, longitude, place: dict) -> None:
+    key = _geocode_key(latitude, longitude)
+    if not key or not place.get("short_name"):
+        return
+    _place_name_cache[key] = place
+    if redis_client is None:
+        return
+    try:
+        redis = redis_client.Redis.from_url(settings.redis_url, decode_responses=True)
+        redis.setex(key, 14 * 24 * 3600, json.dumps(place))
+    except Exception:
+        return
+
+
+async def _fill_missing_place_names() -> None:
+    catalog = _read_mayet_vehicle_catalog() or {}
+    vehicles = catalog.get("vehicles") if isinstance(catalog, dict) else None
+    if not isinstance(vehicles, list):
+        return
+    for vehicle in vehicles:
+        if not isinstance(vehicle, dict):
+            continue
+        latitude = vehicle.get("latitude") or vehicle.get("lat")
+        longitude = vehicle.get("longitude") or vehicle.get("lng")
+        if _read_cached_place(latitude, longitude):
+            continue
+        place = await asyncio.to_thread(_reverse_geocode_place_sync, latitude, longitude)
+        if place:
+            _store_cached_place(latitude, longitude, place)
+        await asyncio.sleep(1.1)
+
+
+def _ensure_place_fill() -> None:
+    global _place_fill_task
+    if _place_fill_task and not _place_fill_task.done():
+        return
+    _place_fill_task = asyncio.create_task(_fill_missing_place_names())
+
+
 async def _enrich_gps_address(gps: Optional[dict]) -> Optional[dict]:
     if not gps:
         return gps
@@ -392,6 +523,36 @@ async def get_vehicle_gps(
         "gps": None,
         "message": "No cached Mayet GPS position found for this vehicle.",
     }
+
+
+@router.get("/gps-places")
+async def get_gps_place_names() -> dict:
+    """Return cached place names for tracker coordinates and fill missing names slowly."""
+    catalog = _read_mayet_vehicle_catalog() or {}
+    vehicles = catalog.get("vehicles") if isinstance(catalog, dict) else []
+    if not isinstance(vehicles, list):
+        vehicles = []
+    places = []
+    pending = 0
+    for vehicle in vehicles:
+        if not isinstance(vehicle, dict):
+            continue
+        latitude = vehicle.get("latitude") or vehicle.get("lat")
+        longitude = vehicle.get("longitude") or vehicle.get("lng")
+        place = _read_cached_place(latitude, longitude)
+        if not place:
+            pending += 1
+        places.append({
+            "plate": vehicle.get("plate") or "",
+            "latitude": latitude,
+            "longitude": longitude,
+            "short_name": (place or {}).get("short_name") or "",
+            "full_name": (place or {}).get("full_name") or "",
+            "pending": not bool(place),
+        })
+    if pending:
+        _ensure_place_fill()
+    return {"count": len(places), "pending": pending, "places": places}
 
 
 @router.get("/mayet/vehicles")
