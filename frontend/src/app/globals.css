@@ -2962,7 +2962,7 @@ html.dark .leaflet-tile { filter: brightness(0.8) invert(0.15); }
 .finance-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .finance-toolbar .fleet-input { width: auto; min-height: 40px; min-width: 180px; background: var(--panel); }
 .finance-help { margin: 0; color: var(--text); font-size: 13px; }
-.finance-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.finance-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .finance-card {
   display: grid;
   gap: 6px;

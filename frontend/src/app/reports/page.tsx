@@ -9,6 +9,7 @@ import { LayoutDashboard, Moon, Sun, Plus, RefreshCw, Menu, ChevronDown, Chevron
 import { useTheme } from "@/hooks/useTheme";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import BackButton from "@/components/navigation/BackButton";
+import GpsLocationList from "@/components/reports/GpsLocationList";
 import LocationDaysDetail from "@/components/reports/LocationDaysDetail";
 import { fetchCachedJson, fetchJson, readCachedJson, API_BASE } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
@@ -20,19 +21,19 @@ import type {
   FinanceSummary,
   DailyProfit,
   DailyProfitRow,
-  IncomeStatement,
+  MayetVehicle,
   PaymentRequest,
 } from "@/types/trip";
 
 type Tab =
-  | "current-location"
   | "location-summary"
   | "payment-requests"
   | "finance-summary"
   | "daily-profit"
-  | "income-statement"
   | "whatsapp-reports"
   | "new-request";
+
+type LocationView = "summary" | "gps";
 
 type PaymentSubtab = "all" | "daily-supervisor" | "pscn";
 
@@ -76,10 +77,8 @@ interface PscnRow {
 }
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "current-location", label: "Current Location" },
-  { id: "location-summary", label: "Location Summary" },
+  { id: "location-summary", label: "Current location" },
   { id: "daily-profit", label: "Daily Profit" },
-  { id: "income-statement", label: "Income Statement" },
   { id: "whatsapp-reports", label: "WhatsApp Reports" },
 ];
 
@@ -90,18 +89,20 @@ export default function ReportsPage() {
   const { theme, toggle } = useTheme();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>(() => {
-    if (typeof window === "undefined") return "current-location";
+    if (typeof window === "undefined") return "location-summary";
     if (window.location.hash === "#payment-requests") {
       window.location.replace("/payments");
     }
-    return "current-location";
+    return "location-summary";
   });
   const [loading, setLoading] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Data states
-  const [locationRows, setLocationRows] = useState<LocationRow[]>([]);
   const [locationSummary, setLocationSummary] = useState<LocationSummary | null>(null);
+  const [locationView, setLocationView] = useState<LocationView>("summary");
+  const [gpsVehicles, setGpsVehicles] = useState<MayetVehicle[]>([]);
+  const [gpsError, setGpsError] = useState("");
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [financeSummary, setFinanceSummary] = useState<FinanceSummary | null>(null);
   const [financePeriod, setFinancePeriod] = useState("daily");
@@ -109,7 +110,6 @@ export default function ReportsPage() {
   const [dailyProfit, setDailyProfit] = useState<DailyProfit | null>(null);
   const [dailyDate, setDailyDate] = useState("");
   const [whatsappFormat, setWhatsappFormat] = useState("default");
-  const [incomeStatement, setIncomeStatement] = useState<IncomeStatement | null>(null);
   const [whatsappSummary, setWhatsappSummary] = useState<WhatsappSummary | null>(null);
   const [filterText, setFilterText] = useState("");
   const [selectedLocation, setSelectedLocation] = useState("all");
@@ -547,12 +547,10 @@ export default function ReportsPage() {
   const load = useCallback(async (t: Tab = tab, force = false, silent = false) => {
     // Avoid re-fetching if data is already present and not forced
     const hasData = (() => {
-      if (t === "current-location") return locationRows.length > 0;
       if (t === "location-summary") return !!locationSummary;
       if (t === "payment-requests") return paymentRequests.length > 0;
       if (t === "finance-summary") return !!financeSummary;
       if (t === "daily-profit") return !!dailyProfit;
-      if (t === "income-statement") return !!incomeStatement;
       return false; // whatsapp reports always recalculate 
     })();
 
@@ -567,9 +565,7 @@ export default function ReportsPage() {
       showedCachedData = true;
     };
 
-    if (t === "current-location") {
-      showCached<LocationRow[]>("reports:current-location-supervised-v2", setLocationRows);
-    } else if (t === "location-summary") {
+    if (t === "location-summary") {
       showCached<LocationSummary>("reports:current-location-summary-supervised-v3", setLocationSummary);
     } else if (t === "payment-requests") {
       showCached<PaymentRequest[]>(PAYMENT_REQUESTS_CACHE_KEY, setPaymentRequests);
@@ -577,8 +573,6 @@ export default function ReportsPage() {
       showCached<FinanceSummary>(`reports:finance-summary-v4:${financePeriod}:${financeGroupBy}`, setFinanceSummary);
     } else if (t === "daily-profit") {
       showCached<DailyProfit>(`reports:daily-profit-v4:${dailyDate || "latest"}`, setDailyProfit);
-    } else if (t === "income-statement") {
-      showCached<IncomeStatement>("reports:income-statement", setIncomeStatement);
     } else if (t === "whatsapp-reports") {
       showCached<PaymentRequest[]>(PAYMENT_REQUESTS_CACHE_KEY, setPaymentRequests);
       showCached<WhatsappSummary>(
@@ -589,10 +583,7 @@ export default function ReportsPage() {
 
     if (!silent) setLoading(!showedCachedData);
     try {
-      if (t === "current-location") {
-        const rows = await fetchCachedJson<LocationRow[]>(`${API_BASE}/reports/current-location`, undefined, { ttlMs: 600_000, cacheKey: "reports:current-location-supervised-v2", forceRefresh: force });
-        setLocationRows(rows);
-      } else if (t === "location-summary") {
+      if (t === "location-summary") {
         const data = await fetchCachedJson<LocationSummary>(`${API_BASE}/reports/current-location-summary`, undefined, { ttlMs: 600_000, cacheKey: "reports:current-location-summary-supervised-v3", forceRefresh: force });
         setLocationSummary(data);
       } else if (t === "payment-requests") {
@@ -611,9 +602,6 @@ export default function ReportsPage() {
           : `${API_BASE}/reports/daily-profit`;
         const data = await fetchCachedJson<DailyProfit>(url, undefined, { ttlMs: 600_000, cacheKey: `reports:daily-profit-v4:${dailyDate || "latest"}`, forceRefresh: force });
         setDailyProfit(data);
-      } else if (t === "income-statement") {
-        const data = await fetchCachedJson<IncomeStatement>(`${API_BASE}/reports/income-statement`, undefined, { ttlMs: 600_000, cacheKey: "reports:income-statement", forceRefresh: force });
-        setIncomeStatement(data);
       } else if (t === "whatsapp-reports") {
         let prs = paymentRequests;
         if (!prs.length || force) {
@@ -657,11 +645,9 @@ export default function ReportsPage() {
     whatsappFormat,
     selectedPrIds,
     paymentRequests,
-    locationRows.length,
     locationSummary,
     financeSummary,
     dailyProfit,
-    incomeStatement,
   ]);
 
   useEffect(() => {
@@ -699,7 +685,6 @@ export default function ReportsPage() {
       "location-summary",
       "finance-summary",
       "daily-profit",
-      "income-statement",
     ];
     const timeout = window.setTimeout(() => {
       preloadTabs
@@ -721,6 +706,26 @@ export default function ReportsPage() {
       }
     }
   }, [tab, paymentRequests, selectedPrIds.length]);
+
+  useEffect(() => {
+    if (tab !== "location-summary" || locationView !== "gps") return;
+    let cancelled = false;
+    fetchCachedJson<{ vehicles?: MayetVehicle[]; message?: string }>(
+      `${API_BASE}/dashboard/mayet/vehicles`,
+      undefined,
+      { ttlMs: 30_000, cacheKey: "dashboard:mayet:vehicles", forceRefresh: true }
+    )
+      .then((catalog) => {
+        if (cancelled) return;
+        setGpsVehicles(Array.isArray(catalog.vehicles) ? catalog.vehicles : []);
+        setGpsError(catalog.vehicles?.length ? "" : (catalog.message || ""));
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setGpsError(error instanceof Error ? error.message : "Could not load GPS locations");
+      });
+    return () => { cancelled = true; };
+  }, [tab, locationView]);
+
 
   const handleTabChange = (t: Tab) => {
     setTab(t);
@@ -794,7 +799,7 @@ export default function ReportsPage() {
   };
 
   const filterRows = <T extends Record<string, unknown>>(rows: T[]): T[] => {
-    const locationFilterActive = selectedLocation !== "all" && (tab === "current-location" || tab === "location-summary");
+    const locationFilterActive = selectedLocation !== "all" && tab === "location-summary";
     let nextRows = rows;
     if (locationFilterActive) {
       nextRows = nextRows.filter((row) => {
@@ -811,10 +816,6 @@ export default function ReportsPage() {
 
   const availableLocations = useMemo(() => {
     const names = new Set<string>();
-    locationRows.forEach((row) => {
-      const name = String(row.current_location_name || "Unknown").trim() || "Unknown";
-      names.add(name);
-    });
     locationSummary?.locations?.forEach((group) => {
       const name = String(group.location_name || "Unknown").trim() || "Unknown";
       names.add(name);
@@ -825,7 +826,7 @@ export default function ReportsPage() {
       if (aUnknown !== bUnknown) return aUnknown ? 1 : -1;
       return a.localeCompare(b);
     });
-  }, [locationRows, locationSummary]);
+  }, [locationSummary]);
 
   const compactGpsNote = (value?: string | null) => {
     const note = String(value || "").trim();
@@ -838,71 +839,6 @@ export default function ReportsPage() {
         <div>{note}</div>
       </details>
     );
-  };
-
-  const exportCurrentLocations = async () => {
-    const rows = filterRows(locationRows as unknown as Record<string, unknown>[]) as unknown as LocationRow[];
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Current Location");
-
-    sheet.mergeCells("A1:J1");
-    const titleCell = sheet.getCell("A1");
-    titleCell.value = "Current Vehicle Locations Report";
-    titleCell.font = { name: "Times New Roman", size: 14, italic: true, bold: true };
-    titleCell.alignment = { horizontal: "center", vertical: "middle" };
-
-    sheet.mergeCells("A2:J2");
-    const dateCell = sheet.getCell("A2");
-    dateCell.value = `Generated - ${new Date().toISOString().slice(0, 10)}`;
-    dateCell.font = { name: "Times New Roman", size: 11, italic: true };
-    dateCell.alignment = { horizontal: "center", vertical: "middle" };
-
-    const headers = ["No", "Vehicle", "Supervisor", "Driver", "Departure", "Destination", "Current Location", "DB Note", "State", "Days"];
-    const headerRow = sheet.addRow(headers);
-    headerRow.eachCell((cell) => {
-      cell.font = { name: "Times New Roman", size: 11, italic: true, bold: true };
-      cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-      cell.border = { top: {style:"thin"}, left: {style:"thin"}, bottom: {style:"thin"}, right: {style:"thin"} };
-    });
-    headerRow.height = 30;
-
-    rows.forEach((row, index) => {
-      const dataRow = sheet.addRow([
-        index + 1,
-        row.vehicle_plate || "N/A",
-        row.supervisor_name || "Unassigned",
-        row.driver_name || "Unassigned",
-        row.departure_name || "",
-        row.destination_name || "",
-        row.current_location_name || "",
-        row.current_location_note || "",
-        stateLabel(row.state),
-        row.current_location_days ?? 0,
-      ]);
-      dataRow.eachCell((cell, colNumber) => {
-        cell.font = { name: "Times New Roman", size: 11 };
-        cell.border = { top: {style:"thin"}, left: {style:"thin"}, bottom: {style:"thin"}, right: {style:"thin"} };
-        cell.alignment = colNumber === 1 || colNumber === 10
-          ? { horizontal: "center", vertical: "middle" }
-          : { horizontal: "left", vertical: "middle", wrapText: true };
-      });
-    });
-
-    sheet.columns = [
-      { width: 6 },
-      { width: 16 },
-      { width: 24 },
-      { width: 20 },
-      { width: 22 },
-      { width: 24 },
-      { width: 32 },
-      { width: 32 },
-      { width: 14 },
-      { width: 8 },
-    ];
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    saveAs(new Blob([buffer]), `Current_Location_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   const exportLocationSummary = async () => {
@@ -1060,7 +996,7 @@ export default function ReportsPage() {
             onChange={(e) => setFilterText(e.target.value)}
             style={{ maxWidth: 320, minHeight: 36 }}
           />
-          {(tab === "current-location" || tab === "location-summary") && (
+          {tab === "location-summary" && locationView === "summary" && (
             <select
               className="fleet-input"
               value={selectedLocation}
@@ -1092,16 +1028,6 @@ export default function ReportsPage() {
               </button>
             </div>
           )}
-          {tab === "current-location" && (
-            <button
-              className="fleet-btn fleet-btn-primary"
-              onClick={exportCurrentLocations}
-              disabled={!locationRows.length}
-              style={{ padding: "0 16px", minHeight: 36 }}
-            >
-              Export XLSX
-            </button>
-          )}
           {tab === "location-summary" && (
             <button
               className="fleet-btn fleet-btn-primary"
@@ -1119,47 +1045,21 @@ export default function ReportsPage() {
       {/* Content */}
       <div className="fleet-page" style={{ flex: 1, overflowY: "auto", paddingBottom: 40 }}>
 
-        {/* ── Current Location ── */}
-        {tab === "current-location" && (
-          <div className="panel">
-            <div className="panel-header"><div className="panel-title">DB Current Locations</div></div>
-            <div className="report-location-table-scroll">
-              <table className="fleet-table">
-                <thead>
-                  <tr>
-                    {["Vehicle", "Supervisor", "Driver", "Departure", "Destination", "Current Location", "DB Note", "Dep. Date", "State", "Days"].map((h) => (
-                      <th key={h}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filterRows(locationRows as unknown as Record<string, unknown>[]).length === 0 ? (
-                    <tr><td colSpan={10} className="empty">No records.</td></tr>
-                  ) : (
-                    (filterRows(locationRows as unknown as Record<string, unknown>[]) as unknown as LocationRow[]).map((r, i) => (
-                      <tr key={i}>
-                        <td>{r.vehicle_plate || "N/A"}</td>
-                        <td>{r.supervisor_name || "Unassigned"}</td>
-                        <td>{r.driver_name || "Unassigned"}</td>
-                        <td>{r.departure_name || "–"}</td>
-                        <td>{r.destination_name || "–"}</td>
-                        <td>{r.current_location_name || "–"}</td>
-                        <td className="gps-note-cell">{compactGpsNote(r.current_location_note)}</td>
-                        <td className="location-date-cell">{r.departure_date || "–"}</td>
-                        <td><span className={`pill ${normalizeState(r.state)}`}>{stateLabel(r.state)}</span></td>
-                        <td>{r.current_location_days ?? 0}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
         {/* ── Location Summary ── */}
         {tab === "location-summary" && locationSummary && (
           <div style={{ display: "grid", gap: 16 }}>
+            <div className="report-tabs" style={{ padding: 0 }}>
+              <button type="button" className={`report-tab${locationView === "summary" ? " active" : ""}`} onClick={() => setLocationView("summary")}>By location</button>
+              <button type="button" className={`report-tab${locationView === "gps" ? " active" : ""}`} onClick={() => setLocationView("gps")}>GPS current location list</button>
+            </div>
+            {locationView === "gps" ? (
+              <GpsLocationList
+                trips={(filterRows(locationSummary.locations as unknown as Record<string, unknown>[]) as unknown as LocationSummaryGroup[]).flatMap((group) => group.vehicles)}
+                gpsVehicles={gpsVehicles}
+                error={gpsError}
+              />
+            ) : (
+            <>
             <div style={{ display: "flex", gap: 12 }}>
               <div className="card"><div className="card-label">Total Locations</div><div className="card-value">{locationSummary.total_locations}</div></div>
               <div className="card"><div className="card-label">Total Vehicles</div><div className="card-value">{locationSummary.total_vehicles}</div></div>
@@ -1222,6 +1122,8 @@ export default function ReportsPage() {
               </div>
               );
             })}
+            </>
+            )}
           </div>
         )}
 
@@ -1672,36 +1574,6 @@ export default function ReportsPage() {
                     </tfoot>
                   )}
                 </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Income Statement ── */}
-        {tab === "income-statement" && incomeStatement && (
-          <div style={{ display: "grid", gap: 16 }}>
-            {incomeStatement._warning && <div className="login-error">{incomeStatement._warning}</div>}
-            <div className="panel">
-              <div className="panel-header"><div className="panel-title">Income Statement</div></div>
-              <div className="muted" style={{ padding: "12px 24px 0", fontSize: 13 }}>
-                Confirmed receivables against approved payment requests. This is the books view, not the daily trip sheet.
-              </div>
-              <div className="panel-body" style={{ display: "grid", gap: 12 }}>
-                {(
-                  [
-                    ["Confirmed Receivables (Revenue)", money(incomeStatement.revenue_total), "green"],
-                    ["Approved Expenses", money(incomeStatement.expense_total), "red"],
-                    ["Net Profit", money(incomeStatement.profit), incomeStatement.profit >= 0 ? "green" : "red"],
-                    ["Receivable Count", incomeStatement.receivable_count, ""],
-                    ["Payment Request Count", incomeStatement.payment_request_count, ""],
-                    ["Trip Count", incomeStatement.trip_count, ""],
-                  ] as [string, string | number, string][]
-                ).map(([label, value, tone]) => (
-                  <div className="summary-row" key={label}>
-                    <span className="muted">{label}</span>
-                    <strong className={tone}>{String(value)}</strong>
-                  </div>
-                ))}
               </div>
             </div>
           </div>

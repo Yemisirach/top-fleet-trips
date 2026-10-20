@@ -777,7 +777,7 @@ async def update_payment_request(
 
 @router.get("/finance-summary")
 async def finance_summary_report(
-    period: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
+    period: str = Query("daily", pattern="^(daily|weekly|monthly|yearly)$"),
     group_by: str = Query("all", pattern="^(all|supervisor|vehicle)$"),
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
@@ -788,7 +788,7 @@ async def finance_summary_report(
     if cached:
         return cached
 
-    date_trunc_unit = {"daily": "day", "weekly": "week", "monthly": "month"}[period]
+    date_trunc_unit = {"daily": "day", "weekly": "week", "monthly": "month", "yearly": "year"}[period]
     group_sql = {
         "all": "CAST('All' AS text)",
         "supervisor": "COALESCE(supervisor_partner.name, 'Unassigned supervisor')",
@@ -906,11 +906,16 @@ expenses AS (
 ),
 bounds AS (
     SELECT
-        (now() AT TIME ZONE 'Africa/Addis_Ababa')::date AS today,
-        date_trunc('week', (now() AT TIME ZONE 'Africa/Addis_Ababa'))::date AS week_start,
-        (date_trunc('week', (now() AT TIME ZONE 'Africa/Addis_Ababa'))::date + 6) AS week_end,
-        date_trunc('month', (now() AT TIME ZONE 'Africa/Addis_Ababa'))::date AS month_start,
-        (date_trunc('month', (now() AT TIME ZONE 'Africa/Addis_Ababa')) + interval '1 month' - interval '1 day')::date AS month_end
+        anchor AS today,
+        date_trunc('week', anchor)::date AS week_start,
+        (date_trunc('week', anchor)::date + 6) AS week_end,
+        date_trunc('month', anchor)::date AS month_start,
+        (date_trunc('month', anchor) + interval '1 month' - interval '1 day')::date AS month_end,
+        date_trunc('year', anchor)::date AS year_start,
+        (date_trunc('year', anchor) + interval '1 year' - interval '1 day')::date AS year_end
+    FROM (
+        SELECT COALESCE(CAST(:as_of AS date), (now() AT TIME ZONE 'Africa/Addis_Ababa')::date) AS anchor
+    ) chosen
 ),
 trip_finance AS (
     SELECT
@@ -992,8 +997,11 @@ def _finance_card(key: str, label: str, start, end, trips: int, revenue, cost, p
 
 
 @router.get("/finance-cards")
-async def finance_cards_report(db: AsyncSession = Depends(get_session)) -> dict:
-    cache_key = "fleet:reports:finance-cards:v1"
+async def finance_cards_report(
+    as_of: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    cache_key = f"fleet:reports:finance-cards:v2:{as_of or 'today'}"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -1005,6 +1013,8 @@ async def finance_cards_report(db: AsyncSession = Depends(get_session)) -> dict:
             b.week_end,
             b.month_start,
             b.month_end,
+            b.year_start,
+            b.year_end,
             COUNT(f.trip_id) FILTER (WHERE f.trip_day = b.today) AS daily_trips,
             COALESCE(SUM(f.revenue_total) FILTER (WHERE f.trip_day = b.today AND f.revenue_total > 0), 0) AS daily_revenue,
             COALESCE(SUM(f.cost_total) FILTER (WHERE f.trip_day = b.today), 0) AS daily_cost,
@@ -1019,11 +1029,16 @@ async def finance_cards_report(db: AsyncSession = Depends(get_session)) -> dict:
             COALESCE(SUM(f.revenue_total) FILTER (WHERE f.trip_day BETWEEN b.month_start AND b.month_end AND f.revenue_total > 0), 0) AS monthly_revenue,
             COALESCE(SUM(f.cost_total) FILTER (WHERE f.trip_day BETWEEN b.month_start AND b.month_end), 0) AS monthly_cost,
             COALESCE(SUM(CASE WHEN f.trip_day BETWEEN b.month_start AND b.month_end AND f.revenue_total > 0 THEN f.revenue_total - f.cost_total ELSE 0 END), 0) AS monthly_profit,
-            COALESCE(SUM(CASE WHEN f.trip_day BETWEEN b.month_start AND b.month_end AND f.revenue_total = 0 THEN f.cost_total ELSE 0 END), 0) AS monthly_pending
+            COALESCE(SUM(CASE WHEN f.trip_day BETWEEN b.month_start AND b.month_end AND f.revenue_total = 0 THEN f.cost_total ELSE 0 END), 0) AS monthly_pending,
+            COUNT(f.trip_id) FILTER (WHERE f.trip_day BETWEEN b.year_start AND b.year_end) AS yearly_trips,
+            COALESCE(SUM(f.revenue_total) FILTER (WHERE f.trip_day BETWEEN b.year_start AND b.year_end AND f.revenue_total > 0), 0) AS yearly_revenue,
+            COALESCE(SUM(f.cost_total) FILTER (WHERE f.trip_day BETWEEN b.year_start AND b.year_end), 0) AS yearly_cost,
+            COALESCE(SUM(CASE WHEN f.trip_day BETWEEN b.year_start AND b.year_end AND f.revenue_total > 0 THEN f.revenue_total - f.cost_total ELSE 0 END), 0) AS yearly_profit,
+            COALESCE(SUM(CASE WHEN f.trip_day BETWEEN b.year_start AND b.year_end AND f.revenue_total = 0 THEN f.cost_total ELSE 0 END), 0) AS yearly_pending
         FROM bounds b
         LEFT JOIN trip_finance f ON true
-        GROUP BY b.today, b.week_start, b.week_end, b.month_start, b.month_end
-    """))).one()
+        GROUP BY b.today, b.week_start, b.week_end, b.month_start, b.month_end, b.year_start, b.year_end
+    """), {"as_of": as_of})).one()
     response = {
         "as_of": str(row.today),
         "timezone": "Africa/Addis_Ababa",
@@ -1031,6 +1046,7 @@ async def finance_cards_report(db: AsyncSession = Depends(get_session)) -> dict:
             _finance_card("daily", "Daily profit", row.today, row.today, row.daily_trips, row.daily_revenue, row.daily_cost, row.daily_profit, row.daily_pending),
             _finance_card("weekly", "Weekly profit", row.week_start, row.week_end, row.weekly_trips, row.weekly_revenue, row.weekly_cost, row.weekly_profit, row.weekly_pending),
             _finance_card("monthly", "Monthly profit", row.month_start, row.month_end, row.monthly_trips, row.monthly_revenue, row.monthly_cost, row.monthly_profit, row.monthly_pending),
+            _finance_card("yearly", "Yearly profit", row.year_start, row.year_end, row.yearly_trips, row.yearly_revenue, row.yearly_cost, row.yearly_profit, row.yearly_pending),
         ],
     }
     cache_set(cache_key, response, ttl_seconds=120)
@@ -1040,16 +1056,17 @@ async def finance_cards_report(db: AsyncSession = Depends(get_session)) -> dict:
 @router.get("/finance-trips")
 async def finance_trips_report(
     window: str = Query("line", pattern="^(card|line)$"),
-    period: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
+    period: str = Query("daily", pattern="^(daily|weekly|monthly|yearly)$"),
     period_start: Optional[date] = Query(None),
     group_by: str = Query("all", pattern="^(all|supervisor|vehicle)$"),
     group_label: str = Query(""),
+    as_of: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
     if window == "line" and period_start is None:
         raise HTTPException(status_code=400, detail="period_start is required")
 
-    cache_key = f"fleet:reports:finance-trips:v1:{window}:{period}:{period_start or ''}:{group_by}:{group_label}"
+    cache_key = f"fleet:reports:finance-trips:v2:{window}:{period}:{period_start or ''}:{group_by}:{group_label}:{as_of or ''}"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -1063,11 +1080,13 @@ async def finance_trips_report(
                 (:period = 'daily' AND f.trip_day = b.today)
                 OR (:period = 'weekly' AND f.trip_day BETWEEN b.week_start AND b.week_end)
                 OR (:period = 'monthly' AND f.trip_day BETWEEN b.month_start AND b.month_end)
+                OR (:period = 'yearly' AND f.trip_day BETWEEN b.year_start AND b.year_end)
             ))
             OR (:window = 'line' AND (
                 (:period = 'daily' AND date_trunc('day', f.trip_ts)::date = :period_start)
                 OR (:period = 'weekly' AND date_trunc('week', f.trip_ts)::date = :period_start)
                 OR (:period = 'monthly' AND date_trunc('month', f.trip_ts)::date = :period_start)
+                OR (:period = 'yearly' AND date_trunc('year', f.trip_ts)::date = :period_start)
             ) AND (
                 :group_by = 'all'
                 OR (:group_by = 'supervisor' AND f.supervisor_name = :group_label)
@@ -1082,6 +1101,7 @@ async def finance_trips_report(
         "period_start": period_start,
         "group_by": group_by,
         "group_label": group_label,
+        "as_of": as_of,
     })
     trips = [_finance_trip_payload(row) for row in rows.fetchall()]
     response = {"window": window, "period": period, "trips": trips}
@@ -1098,7 +1118,7 @@ async def finance_trip_detail(trip_id: int, db: AsyncSession = Depends(get_sessi
 
     row = (await db.execute(
         text(_FINANCE_TRIP_CTE + "SELECT * FROM trip_finance WHERE trip_id = :trip_id"),
-        {"trip_id": trip_id},
+        {"trip_id": trip_id, "as_of": None},
     )).first()
     if not row:
         raise HTTPException(status_code=404, detail="Trip not found in the finance summary")

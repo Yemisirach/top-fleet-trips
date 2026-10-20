@@ -13,7 +13,37 @@ const rangeLabel = (card: FinanceCard) =>
 
 const signedClass = (value: number) => (value > 0 ? "green" : value < 0 ? "red" : "");
 
-const periodTitle = (period: string) => (period === "daily" ? "Daily" : period === "weekly" ? "Weekly" : "Monthly");
+const periodTitle = (period: string) => (
+  period === "daily" ? "Daily" : period === "weekly" ? "Weekly" : period === "yearly" ? "Yearly" : "Monthly"
+);
+
+const isoDate = (value: Date) => {
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${value.getFullYear()}-${month}-${day}`;
+};
+
+const periodRange = (period: string, anchor: string) => {
+  const [yearText, monthText, dayText] = anchor.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (period === "yearly") return { from: `${year}-01-01`, to: `${year}-12-31` };
+  if (period === "monthly") {
+    const end = new Date(year, month, 0).getDate();
+    return { from: `${yearText}-${monthText}-01`, to: `${yearText}-${monthText}-${String(end).padStart(2, "0")}` };
+  }
+  if (period === "weekly") {
+    const date = new Date(year, month - 1, day);
+    const mondayOffset = (date.getDay() + 6) % 7;
+    const start = new Date(date);
+    start.setDate(date.getDate() - mondayOffset);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return { from: isoDate(start), to: isoDate(end) };
+  }
+  return { from: anchor, to: anchor };
+};
 
 function TripDetailView({ detail }: { detail: FinanceTripDetail }) {
   const counted = detail.cost_source === "expense_lines" ? "trip expense lines" : "the trip payment request";
@@ -160,6 +190,7 @@ function TripList({
 
 export default function FinanceSummaryPanel() {
   const [period, setPeriod] = useState("daily");
+  const [anchorDate, setAnchorDate] = useState("");
   const [groupBy, setGroupBy] = useState("all");
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [summaryError, setSummaryError] = useState("");
@@ -172,26 +203,31 @@ export default function FinanceSummaryPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchJson<FinanceCards>(`${API_BASE}/reports/finance-cards`)
-      .then((data) => { if (!cancelled) setCards(data); })
+    const params = anchorDate ? `?as_of=${anchorDate}` : "";
+    fetchJson<FinanceCards>(`${API_BASE}/reports/finance-cards${params}`)
+      .then((data) => {
+        if (cancelled) return;
+        setCards(data);
+        if (!anchorDate && data.as_of) setAnchorDate(data.as_of);
+      })
       .catch(() => { if (!cancelled) setCards(null); });
     return () => { cancelled = true; };
-  }, []);
+  }, [anchorDate]);
 
   useEffect(() => {
     let cancelled = false;
     setSummaryError("");
     fetchCachedJson<FinanceSummary>(
-      `${API_BASE}/reports/finance-summary?period=${period}&group_by=${groupBy}`,
+      `${API_BASE}/reports/finance-summary?period=${period}&group_by=${groupBy}${anchorDate ? `&from_date=${periodRange(period, anchorDate).from}&to_date=${periodRange(period, anchorDate).to}` : ""}`,
       undefined,
-      { ttlMs: 120_000, cacheKey: `reports:finance-summary-v5:${period}:${groupBy}`, forceRefresh: true },
+      { ttlMs: 120_000, cacheKey: `reports:finance-summary-v6:${period}:${groupBy}:${anchorDate}`, forceRefresh: true },
     )
       .then((data) => { if (!cancelled) setSummary(data); })
       .catch((error) => {
         if (!cancelled) setSummaryError(error instanceof Error ? error.message : "Could not load finance summary");
       });
     return () => { cancelled = true; };
-  }, [period, groupBy]);
+  }, [period, groupBy, anchorDate]);
 
   const loadTrips = async (key: string, params: URLSearchParams) => {
     setTripLists((current) => ({ ...current, [key]: { status: "loading" } }));
@@ -217,7 +253,9 @@ export default function FinanceSummaryPanel() {
     setOpenCard(card.key);
     const key = `card:${card.key}`;
     if (!tripLists[key] || tripLists[key].status === "error") {
-      loadTrips(key, new URLSearchParams({ window: "card", period: card.key }));
+      const params = new URLSearchParams({ window: "card", period: card.key });
+      if (anchorDate) params.set("as_of", anchorDate);
+      loadTrips(key, params);
     }
   };
 
@@ -239,6 +277,7 @@ export default function FinanceSummaryPanel() {
         period_start: row.period_start,
         group_by: groupBy,
         group_label: row.group_label || "",
+        ...(anchorDate ? { as_of: anchorDate } : {}),
       }));
     }
   };
@@ -276,17 +315,51 @@ export default function FinanceSummaryPanel() {
   return (
     <div className="finance-page">
       <div className="finance-toolbar">
-        <select className="fleet-input" value={period} onChange={(event) => { setPeriod(event.target.value); setOpenLine(null); setOpenCard(null); setOpenTripId(null); }}>
+        <select className="fleet-input" value={period} onChange={(event) => { setPeriod(event.target.value); setOpenLine(null); setOpenCard(null); setOpenTripId(null); setTripLists({}); }}>
           <option value="daily">Daily</option>
           <option value="weekly">Weekly</option>
           <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
         </select>
+        {period === "yearly" ? (
+          <input
+            className="fleet-input"
+            type="number"
+            min={2020}
+            max={2100}
+            aria-label="Year"
+            value={anchorDate.slice(0, 4)}
+            onChange={(event) => {
+              const year = event.target.value.slice(0, 4);
+              if (year.length === 4) setAnchorDate(`${year}-01-01`);
+              setOpenLine(null);
+              setOpenCard(null);
+              setOpenTripId(null);
+              setTripLists({});
+            }}
+          />
+        ) : (
+          <input
+            className="fleet-input"
+            type={period === "monthly" ? "month" : "date"}
+            aria-label={period === "monthly" ? "Month" : "Date"}
+            value={period === "monthly" ? anchorDate.slice(0, 7) : anchorDate}
+            onChange={(event) => {
+              const value = event.target.value;
+              setAnchorDate(period === "monthly" && value ? `${value}-01` : value);
+              setOpenLine(null);
+              setOpenCard(null);
+              setOpenTripId(null);
+              setTripLists({});
+            }}
+          />
+        )}
         <select className="fleet-input" value={groupBy} onChange={(event) => { setGroupBy(event.target.value); setOpenLine(null); setOpenTripId(null); }}>
           <option value="all">All</option>
           <option value="supervisor">Assigned Supervisor</option>
           <option value="vehicle">Vehicle</option>
         </select>
-        <p className="finance-help">Click a card or a row to open the trips.</p>
+        <p className="finance-help">Pick a day, month, or year. Click a card or a row to open the trips.</p>
       </div>
       {(summary?._warning || summaryError) && <div className="login-error">{summary?._warning || summaryError}</div>}
       <div className="finance-cards">

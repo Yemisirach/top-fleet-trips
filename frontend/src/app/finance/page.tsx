@@ -43,7 +43,7 @@ export default function FinancePage() {
             </button>
             <div>
               <div style={{ fontWeight: 900, fontSize: 20 }}>Finance Summary</div>
-              <div style={{ color: "var(--muted)", fontSize: 13 }}>Daily, weekly, and monthly posted profit</div>
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>Daily, weekly, monthly, and yearly posted profit</div>
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
