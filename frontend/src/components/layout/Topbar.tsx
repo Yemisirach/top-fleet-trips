@@ -1,5 +1,8 @@
 "use client";
-import { Sun, Moon, Menu } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Sun, Moon, Menu, LogOut } from "lucide-react";
+import LastSyncLabel, { SyncButton } from "@/components/layout/LastSync";
+import { clearFleetUser } from "@/lib/scope";
 
 interface TopbarProps {
   title: string;
@@ -24,7 +27,13 @@ export default function Topbar({
   searchValue,
   onSearchChange,
 }: TopbarProps) {
+  const router = useRouter();
   const badgeClass = modeWarning ? "mode-badge warning" : "mode-badge";
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    clearFleetUser();
+    router.push("/login");
+  };
 
   return (
     <div className="fleet-topbar" style={{ gap: 12 }}>
@@ -63,6 +72,8 @@ export default function Topbar({
           onChange={(e) => onSearchChange(e.target.value)}
           style={{ minHeight: 36, flex: 1, width: "auto", minWidth: 200 }}
         />
+        <LastSyncLabel searching={Boolean(searchValue.trim())} />
+        <SyncButton />
       </div>
 
       {/* Right: data source badge + theme */}
@@ -74,6 +85,9 @@ export default function Topbar({
         <button className="btn" id="theme-toggle" onClick={onThemeToggle}>
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           <span id="theme-label">{theme === "dark" ? "Light" : "Dark"}</span>
+        </button>
+        <button className="btn window-logout" type="button" onClick={logout} title="Logout">
+          <LogOut size={16} /> Logout
         </button>
       </div>
     </div>

@@ -9,6 +9,24 @@ const etbFormatter = new Intl.NumberFormat("en-ET", {
 export const money = (value?: number | string | null) =>
   etbFormatter.format(Number(value || 0));
 
+export function paymentRequestItemLines(item?: string, description?: string): string[] {
+  const name = String(item || "").trim();
+  const note = String(description || "").trim();
+  const lines = [name || "Item"];
+  if (note && note.toLowerCase() !== lines[0].toLowerCase() && !note.toLowerCase().startsWith("posted accounting entry")) {
+    lines.push(note);
+  }
+  return lines;
+}
+
+export function repeatedGroupSpan<T>(rows: T[], index: number, key: (row: T) => string): number {
+  const current = key(rows[index]);
+  if (index > 0 && key(rows[index - 1]) === current) return 0;
+  let count = 1;
+  while (index + count < rows.length && key(rows[index + count]) === current) count += 1;
+  return count;
+}
+
 // ── State normalisation ───────────────────────────────
 const STATE_MAP: Record<string, string> = {
   planned: "available",

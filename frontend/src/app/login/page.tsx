@@ -3,7 +3,8 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Truck } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
-import { fetchJson, API_BASE } from "@/lib/api";
+import { fetchJson, API_BASE, storeFleetCopies } from "@/lib/api";
+import { rememberFleetUser, type FleetUser } from "@/lib/scope";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,12 +20,17 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await fetchJson(`${API_BASE}/auth/login`, {
+      const result = await fetchJson<{ user?: FleetUser }>(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
       } as RequestInit);
-      router.push("/");
+      rememberFleetUser(result.user);
+      await Promise.race([
+        storeFleetCopies(),
+        new Promise((resolve) => window.setTimeout(resolve, 20_000)),
+      ]);
+      router.push(result.user?.role === "supervisor" ? "/supervisor" : "/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

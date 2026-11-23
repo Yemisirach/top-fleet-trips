@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
+from app.core.auth import require_user
 from app.core.database import get_session
+from app.core.scope import require_assigned_vehicle, scope_dashboard, scope_gps_places, scope_mayet_catalog
 from app.core.server_cache import CACHE_TTL_SECONDS, cache_get, cache_get_stale, cache_set
 from app.core.settings import get_settings
 from app.services.journey_assembly import (
@@ -31,6 +33,8 @@ settings = get_settings()
 _reverse_geocode_cache: dict[str, str] = {}
 _place_name_cache: dict[str, dict] = {}
 _place_fill_task: Optional[asyncio.Task] = None
+_dashboard_refresh_task: Optional[asyncio.Task] = None
+DASHBOARD_CACHE_TTL_SECONDS = 600
 
 
 def _as_float(value) -> float:
@@ -482,8 +486,10 @@ async def _resolve_vehicle_ref(db: AsyncSession, vehicle_ref: str) -> Optional[s
 async def get_vehicle_gps(
     vehicle_ref: str,
     db: AsyncSession = Depends(get_session),
+    user: dict = Depends(require_user),
 ) -> dict:
     """Return the latest GPS position cached by the Mayet worker."""
+    require_assigned_vehicle(user, vehicle_ref)
     direct_gps = _read_gps_from_redis(vehicle_ref)
     if direct_gps:
         return {
@@ -526,7 +532,7 @@ async def get_vehicle_gps(
 
 
 @router.get("/gps-places")
-async def get_gps_place_names() -> dict:
+async def get_gps_place_names(user: dict = Depends(require_user)) -> dict:
     """Return cached place names for tracker coordinates and fill missing names slowly."""
     catalog = _read_mayet_vehicle_catalog() or {}
     vehicles = catalog.get("vehicles") if isinstance(catalog, dict) else []
@@ -552,15 +558,15 @@ async def get_gps_place_names() -> dict:
         })
     if pending:
         _ensure_place_fill()
-    return {"count": len(places), "pending": pending, "places": places}
+    return scope_gps_places({"count": len(places), "pending": pending, "places": places}, user)
 
 
 @router.get("/mayet/vehicles")
-async def get_mayet_vehicle_catalog() -> dict:
+async def get_mayet_vehicle_catalog(user: dict = Depends(require_user)) -> dict:
     """Return the latest Mayet vehicle catalog cached by the GPS worker."""
     catalog = _read_mayet_vehicle_catalog()
     if catalog:
-        return {"configured": True, **catalog}
+        return scope_mayet_catalog({"configured": True, **catalog}, user)
     return {
         "configured": bool(settings.mayet_username and settings.mayet_password),
         "count": 0,
@@ -573,8 +579,10 @@ async def get_mayet_vehicle_catalog() -> dict:
 async def get_vehicle_history(
     vehicle_ref: str,
     db: AsyncSession = Depends(get_session),
+    user: dict = Depends(require_user),
 ) -> dict:
     """Return recent trip history for a selected vehicle plate/id."""
+    require_assigned_vehicle(user, vehicle_ref)
     plate_number = _plate_match_key(vehicle_ref)[1]
     result = await db.execute(text("""
         SELECT id, name, license_plate
@@ -645,22 +653,48 @@ async def get_snapshot(db: AsyncSession = Depends(get_session)) -> dict:
     return await _get_live_dashboard(db)
 
 
+def _schedule_dashboard_refresh(cache_key: str) -> None:
+    global _dashboard_refresh_task
+    if _dashboard_refresh_task and not _dashboard_refresh_task.done():
+        return
+
+    async def _refresh() -> None:
+        from app.core.database import AsyncSessionLocal
+
+        try:
+            async with AsyncSessionLocal() as session:
+                dashboard = await asyncio.wait_for(
+                    _get_live_dashboard(session),
+                    timeout=settings.db_query_timeout_seconds,
+                )
+            cache_set(cache_key, dashboard, DASHBOARD_CACHE_TTL_SECONDS)
+        except Exception:
+            return
+
+    _dashboard_refresh_task = asyncio.create_task(_refresh())
+
+
 @router.get("/full")
 async def get_full_dashboard(
     mode: str = Query("live", description="Only 'live' is supported; data comes from Odoo."),
     refresh: bool = Query(False),
     db: AsyncSession = Depends(get_session),
+    user: dict = Depends(require_user),
 ) -> dict:
     """Return full dashboard data from Odoo in a single call."""
 
     if mode != "live":
         raise HTTPException(status_code=400, detail="Only live Odoo mode is supported.")
 
-    cache_key = "fleet:dashboard:full"
+    cache_key = "fleet:dashboard:full:v7"
     if not refresh:
         cached = cache_get(cache_key)
         if cached:
-            return cached
+            return scope_dashboard(cached, user)
+        stale = cache_get_stale(cache_key)
+        if stale:
+            stale["_cache_warning"] = "Showing the saved copy. The live database did not answer."
+            return scope_dashboard(stale, user)
 
     try:
         dashboard = await asyncio.wait_for(
@@ -668,21 +702,21 @@ async def get_full_dashboard(
             timeout=settings.db_query_timeout_seconds,
         )
 
-        cache_set(cache_key, dashboard, CACHE_TTL_SECONDS)
+        cache_set(cache_key, dashboard, DASHBOARD_CACHE_TTL_SECONDS)
 
-        return dashboard
+        return scope_dashboard(dashboard, user)
     except asyncio.TimeoutError:
         stale = cache_get_stale(cache_key)
         if stale:
-            stale["_cache_warning"] = f"Live Odoo DB timed out after {settings.db_query_timeout_seconds:g}s. Showing last server cache."
-            return stale
+            stale["_cache_warning"] = "Showing the saved copy. The live database did not answer."
+            return scope_dashboard(stale, user)
         reason = f"Live Odoo DB timed out after {settings.db_query_timeout_seconds:g}s."
         raise HTTPException(status_code=503, detail=reason)
     except Exception as e:
         stale = cache_get_stale(cache_key)
         if stale:
-            stale["_cache_warning"] = f"Live Odoo DB unavailable. Showing last server cache."
-            return stale
+            stale["_cache_warning"] = "Showing the saved copy. The live database did not answer."
+            return scope_dashboard(stale, user)
         reason = f"Live Odoo DB unavailable: {str(e)[:160]}"
         raise HTTPException(status_code=503, detail=reason)
 
@@ -711,7 +745,6 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
                 state,
                 payment_reference
             FROM trip_receivable
-            WHERE trip_id IS NOT NULL
         ),
         payment_request_lines AS (
             SELECT
@@ -732,22 +765,8 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
         )
         SELECT
             COALESCE(SUM(r.amount_due), 0) AS receivable_total,
-            COALESCE(SUM(
-                CASE
-                    WHEN LOWER(COALESCE(r.state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                         OR COALESCE(r.payment_reference, '') <> ''
-                    THEN r.amount_due
-                    ELSE 0
-                END
-            ), 0) AS customer_paid_total,
-            COALESCE(SUM(
-                CASE
-                    WHEN LOWER(COALESCE(r.state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                         OR COALESCE(r.payment_reference, '') <> ''
-                    THEN 0
-                    ELSE r.amount_due
-                END
-            ), 0) AS customer_pending_total,
+            (SELECT COALESCE(SUM(amount_due), 0) FROM trip_receivable WHERE COALESCE(payment_reference, '') ~* 'FT[[:space:]]*[0-9]') AS customer_paid_total,
+            (SELECT COALESCE(SUM(amount_due), 0) FROM trip_receivable WHERE COALESCE(payment_reference, '') !~* 'FT[[:space:]]*[0-9]') AS customer_pending_total,
             COUNT(DISTINCT r.trip_id) AS receivable_trip_count,
             (SELECT COALESCE(SUM(amount), 0) FROM trip_expenses) AS expense_total,
             (SELECT COALESCE(SUM(amount), 0) FROM payment_request_lines) AS payment_request_total,
@@ -851,6 +870,7 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
                 "vehicle_brand": row.get("brand") or row.get("model"),
                 "supervisor_name": row.get("supervisor_name"),
                 "driver_name": row.get("driver_name"),
+                "driver_phone": row.get("driver_phone"),
                 "trip_id": row.get("trip_id"),
                 "reference": row.get("reference"),
                 "state": row.get("state"),
@@ -873,6 +893,8 @@ async def _get_live_dashboard(db: AsyncSession) -> dict:
                 "vehicle_id": row.get("vehicle_id"),
                 "vehicle_plate": row.get("license_plate"),
                 "driver_name": row.get("driver_name"),
+                "driver_phone": row.get("driver_phone"),
+                "supervisor_name": row.get("supervisor_name"),
                 "origin": row.get("departure_name"),
                 "destination": row.get("destination_name"),
                 "current_location": row.get("current_location_name"),

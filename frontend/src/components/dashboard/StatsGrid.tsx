@@ -9,7 +9,6 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   Journeys: <Truck size={18} />,
   Trips: <CircleDot size={18} />,
   "Vehicle Conflicts": <Truck size={18} />,
-  "Customer Paid": <DollarSign size={18} />,
   "Customer Pending": <CreditCard size={18} />,
 };
 
@@ -30,7 +29,6 @@ export default function StatsGrid({ data, allTrips, onOpenView }: StatsGridProps
     ["Trips", data.summary?.total_journeys ?? orderCount, "", "trips", "trip_rows"],
     ["Journeys", allTrips.length, "", "trips", "all"],
     ["Vehicle Conflicts", data.vehicle_conflict_count ?? 0, data.vehicle_conflict_count ? "red" : "", "overview"],
-    ["Customer Paid", money(payment.customer_paid_total ?? 0), "green", "payments"],
     ["Customer Pending", money(payment.customer_pending_total ?? 0), "red", "payments"],
   ];
 

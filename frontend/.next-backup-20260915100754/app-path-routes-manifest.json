@@ -1,0 +1,16 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/apple-icon.png/route": "/apple-icon.png",
+  "/detail/page": "/detail",
+  "/favicon.ico/route": "/favicon.ico",
+  "/icon.png/route": "/icon.png",
+  "/login/page": "/login",
+  "/map/page": "/map",
+  "/page": "/",
+  "/payments/page": "/payments",
+  "/planner/page": "/planner",
+  "/reports/page": "/reports",
+  "/service-worker/route": "/service-worker",
+  "/sw.js/route": "/sw.js"
+}

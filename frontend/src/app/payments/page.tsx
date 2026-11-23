@@ -2,16 +2,17 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from "recharts";
 import * as ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
-import { Fragment, useEffect, useState, useCallback, useMemo } from "react";
+import { Fragment, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LayoutDashboard, Moon, Sun, Plus, RefreshCw, Menu, ChevronDown, ChevronRight, Pencil } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import BackButton from "@/components/navigation/BackButton";
-import { fetchCachedJson, fetchJson, readCachedJson, API_BASE } from "@/lib/api";
+import { fetchCachedJson, fetchJson, readCachedJson, sessionIsActive, API_BASE } from "@/lib/api";
+import LastSyncLabel, { SyncButton } from "@/components/layout/LastSync";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { cleanTripReference, money, normalizeState, stateLabel } from "@/lib/formatters";
+import { cleanTripReference, money, normalizeState, paymentRequestItemLines, repeatedGroupSpan, stateLabel } from "@/lib/formatters";
 import type {
   LocationRow,
   LocationSummary,
@@ -33,7 +34,39 @@ type Tab =
   | "whatsapp-reports"
   | "new-request";
 
-type PaymentSubtab = "all" | "daily-supervisor" | "pscn";
+type PaymentSubtab = "all" | "daily-supervisor" | "pscn" | "tracking";
+
+interface PaymentTrackingRow {
+  id: number;
+  receivable_name: string;
+  state: string;
+  amount_due: number;
+  paid_amount: number;
+  unpaid_amount: number;
+  payment_reference: string;
+  customer_name: string;
+  date: string | null;
+  trip_id: number | null;
+  trip_name: string;
+  vehicle_plate: string;
+  route: string;
+  receivable_status: "confirmed" | "unconfirmed" | string;
+  payment_status: "paid" | "unpaid" | string;
+  has_trip: boolean;
+}
+
+interface PaymentTracking {
+  rows: PaymentTrackingRow[];
+  totals: {
+    count: number;
+    amount_total: number;
+    paid_total: number;
+    unpaid_total: number;
+    unconfirmed_total: number;
+    with_trip: number;
+    without_trip: number;
+  };
+}
 
 interface WhatsappSummary {
   payment_requests_text: string;
@@ -78,8 +111,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "payment-requests", label: "Payment Requests" },
 ];
 
-const todayIsoDate = () => new Date().toISOString().slice(0, 10);
-const PAYMENT_REQUESTS_CACHE_KEY = "reports:payment-requests:odoo-db-v5";
+const todayIsoDate = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Addis_Ababa", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const PAYMENT_REQUESTS_CACHE_KEY = "reports:payment-requests:odoo-db-v6-trip";
 
 export default function ReportsPage() {
   const { theme, toggle } = useTheme();
@@ -118,6 +151,12 @@ export default function ReportsPage() {
   const [paymentFilterState, setPaymentFilterState] = useState("all");
   const [paymentFilterDate, setPaymentFilterDate] = useState(() => todayIsoDate());
   const [paymentSubtab, setPaymentSubtab] = useState<PaymentSubtab>("daily-supervisor");
+  const [trackingReceivable, setTrackingReceivable] = useState("all");
+  const [trackingTrip, setTrackingTrip] = useState("all");
+  const [trackingPayment, setTrackingPayment] = useState("all");
+  const [tracking, setTracking] = useState<PaymentTracking | null>(null);
+  const [trackingError, setTrackingError] = useState("");
+  const [trackingLoading, setTrackingLoading] = useState(false);
   const [paymentStatusUpdating, setPaymentStatusUpdating] = useState<string | null>(null);
   const [paymentRequestsError, setPaymentRequestsError] = useState("");
 
@@ -272,10 +311,8 @@ export default function ReportsPage() {
     return paymentRequests
       .filter((pr) => {
         if (!q) return true;
-        return Object.values(pr as unknown as Record<string, unknown>)
-          .join(" ")
-          .toLowerCase()
-          .includes(q);
+        const lines = requestLines(pr).map((line) => `${line.item || ""} ${line.description || ""}`).join(" ");
+        return `${Object.values(pr as unknown as Record<string, unknown>).join(" ")} ${lines}`.toLowerCase().includes(q);
       })
       .filter((pr) => (
         paymentFilterState === "all" ||
@@ -287,17 +324,27 @@ export default function ReportsPage() {
       });
   }, [filterText, paymentFilterDate, paymentFilterState, paymentRequests]);
 
+  const approvedPaymentRequest = (pr: PaymentRequest) => {
+    const state = String(pr.state || "").toLowerCase();
+    if (state === "cancelled" || state === "canceled") return false;
+    return Boolean(pr.approved_on) || ["approved", "paid", "posted", "done"].includes(state);
+  };
+
   const paymentRequestStats = useMemo(() => {
-    const total = filteredPaymentRequests.reduce((sum, pr) => sum + Number(pr.total_amount || 0), 0);
+    const rows = paymentSubtab === "daily-supervisor"
+      ? filteredPaymentRequests.filter(approvedPaymentRequest)
+      : filteredPaymentRequests;
+    const total = rows.reduce((sum, pr) => sum + Number(pr.total_amount || 0), 0);
     return {
-      count: filteredPaymentRequests.length,
+      count: rows.length,
       total,
       date: paymentFilterDate || todayIsoDate(),
     };
-  }, [filteredPaymentRequests, paymentFilterDate]);
+  }, [filteredPaymentRequests, paymentFilterDate, paymentSubtab]);
 
   const dailySupervisorRows = useMemo<DailySupervisorRow[]>(() => {
     return filteredPaymentRequests
+      .filter(approvedPaymentRequest)
       .flatMap((pr) => requestLines(pr).map((line) => ({
         date: (pr.date || pr.approved_on || new Date().toISOString()).slice(0, 10),
         supervisor: pr.supervisor_name || pr.requester_name || "Unassigned",
@@ -306,7 +353,7 @@ export default function ReportsPage() {
         requestId: pr.id,
         state: pr.state || "draft",
         requester: pr.requester_name || "",
-        item: line.item || "",
+        item: paymentItemName(line.item, line.description),
         description: line.description || "",
         quantity: line.quantity || 1,
         amount: line.amount || 0,
@@ -316,7 +363,9 @@ export default function ReportsPage() {
       .sort((a, b) =>
         b.date.localeCompare(a.date) ||
         a.supervisor.localeCompare(b.supervisor) ||
-        a.vehicle.localeCompare(b.vehicle)
+        a.vehicle.localeCompare(b.vehicle) ||
+        a.route.localeCompare(b.route) ||
+        String(a.requestId).localeCompare(String(b.requestId))
       );
   }, [filteredPaymentRequests, paymentRouteName]);
 
@@ -397,11 +446,11 @@ export default function ReportsPage() {
         row.supervisor,
         row.vehicle,
         row.route,
-        row.item || row.description || "", // Removed description/status to keep item list clean
+        paymentRequestItemLines(row.item, row.description).join("\n"),
         row.quantity,
         row.amount,
         row.lineTotal,
-        `${row.state || "draft"} / Request ${row.requestId}`,
+        "",
       ]);
       dataRow.eachCell((cell, colNumber) => {
         cell.font = { name: "Times New Roman", size: 11 };
@@ -409,13 +458,30 @@ export default function ReportsPage() {
         if ([7, 8].includes(colNumber)) {
           cell.alignment = { horizontal: "right", vertical: "middle" };
           cell.numFmt = "#,##0.00";
-        } else if ([1, 3, 6].includes(colNumber)) {
-          cell.alignment = { horizontal: "center", vertical: "middle" };
+        } else if ([1, 2, 3, 4, 6].includes(colNumber)) {
+          cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
         } else {
           cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
         }
       });
     });
+
+    const mergeRepeated = (column: number, keyOf: (row: DailySupervisorRow) => string) => {
+      let start = 0;
+      while (start < dailySupervisorRows.length) {
+        const key = keyOf(dailySupervisorRows[start]);
+        let end = start + 1;
+        while (end < dailySupervisorRows.length && keyOf(dailySupervisorRows[end]) === key) end += 1;
+        if (end > start + 1) {
+          sheet.mergeCells(4 + start, column, 3 + end, column);
+          sheet.getCell(4 + start, column).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+        }
+        start = end;
+      }
+    };
+    mergeRepeated(2, (row) => row.supervisor || "Unassigned");
+    mergeRepeated(3, (row) => `${row.supervisor}|${row.vehicle}`);
+    mergeRepeated(4, (row) => `${row.supervisor}|${row.vehicle}|${row.route}`);
 
     const totalRow = sheet.addRow(["", "", "", "", "", "", "", "Total", dailySupervisorTotal]);
     sheet.mergeCells(`A${totalRow.number}:G${totalRow.number}`);
@@ -564,7 +630,7 @@ export default function ReportsPage() {
     if (t === "current-location") {
       showCached<LocationRow[]>("reports:current-location-supervised-v2", setLocationRows);
     } else if (t === "location-summary") {
-      showCached<LocationSummary>("reports:current-location-summary-supervised-v2", setLocationSummary);
+      showCached<LocationSummary>("reports:current-location-summary-supervised-v5", setLocationSummary);
     } else if (t === "payment-requests") {
       showCached<PaymentRequest[]>(PAYMENT_REQUESTS_CACHE_KEY, setPaymentRequests);
     } else if (t === "finance-summary") {
@@ -584,31 +650,31 @@ export default function ReportsPage() {
     if (!silent) setLoading(!showedCachedData);
     try {
       if (t === "current-location") {
-        const rows = await fetchCachedJson<LocationRow[]>(`${API_BASE}/reports/current-location`, undefined, { ttlMs: 600_000, cacheKey: "reports:current-location-supervised-v2", forceRefresh: force });
+        const rows = await fetchCachedJson<LocationRow[]>(`${API_BASE}/reports/current-location`, undefined, { ttlMs: 60_000, cacheKey: "reports:current-location-supervised-v2", forceRefresh: force });
         setLocationRows(rows);
       } else if (t === "location-summary") {
-        const data = await fetchCachedJson<LocationSummary>(`${API_BASE}/reports/current-location-summary`, undefined, { ttlMs: 600_000, cacheKey: "reports:current-location-summary-supervised-v2", forceRefresh: force });
+        const data = await fetchCachedJson<LocationSummary>(`${API_BASE}/reports/current-location-summary`, undefined, { ttlMs: 60_000, cacheKey: "reports:current-location-summary-supervised-v5", forceRefresh: force });
         setLocationSummary(data);
       } else if (t === "payment-requests") {
         setPaymentRequestsError("");
-        const rows = await fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, { ttlMs: 600_000, cacheKey: PAYMENT_REQUESTS_CACHE_KEY, forceRefresh: force });
+        const rows = await fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, { ttlMs: 60_000, cacheKey: PAYMENT_REQUESTS_CACHE_KEY, forceRefresh: force });
         setPaymentRequests(rows);
       } else if (t === "finance-summary") {
-        const data = await fetchCachedJson<FinanceSummary>(`${API_BASE}/reports/finance-summary?period=${financePeriod}`, undefined, { ttlMs: 600_000, cacheKey: `reports:finance-summary:${financePeriod}`, forceRefresh: force });
+        const data = await fetchCachedJson<FinanceSummary>(`${API_BASE}/reports/finance-summary?period=${financePeriod}`, undefined, { ttlMs: 60_000, cacheKey: `reports:finance-summary:${financePeriod}`, forceRefresh: force });
         setFinanceSummary(data);
       } else if (t === "daily-profit") {
         const url = dailyDate
           ? `${API_BASE}/reports/daily-profit?report_date=${dailyDate}`
           : `${API_BASE}/reports/daily-profit`;
-        const data = await fetchCachedJson<DailyProfit>(url, undefined, { ttlMs: 600_000, cacheKey: `reports:daily-profit:${dailyDate || "latest"}`, forceRefresh: force });
+        const data = await fetchCachedJson<DailyProfit>(url, undefined, { ttlMs: 60_000, cacheKey: `reports:daily-profit:${dailyDate || "latest"}`, forceRefresh: force });
         setDailyProfit(data);
       } else if (t === "income-statement") {
-        const data = await fetchCachedJson<IncomeStatement>(`${API_BASE}/reports/income-statement`, undefined, { ttlMs: 600_000, cacheKey: "reports:income-statement", forceRefresh: force });
+        const data = await fetchCachedJson<IncomeStatement>(`${API_BASE}/reports/income-statement`, undefined, { ttlMs: 60_000, cacheKey: "reports:income-statement", forceRefresh: force });
         setIncomeStatement(data);
       } else if (t === "whatsapp-reports") {
         let prs = paymentRequests;
         if (!prs.length || force) {
-            prs = await fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, { ttlMs: 600_000, cacheKey: PAYMENT_REQUESTS_CACHE_KEY, forceRefresh: force });
+            prs = await fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, { ttlMs: 60_000, cacheKey: PAYMENT_REQUESTS_CACHE_KEY, forceRefresh: force });
             setPaymentRequests(prs);
             setPaymentRequestsError("");
         }
@@ -628,11 +694,11 @@ export default function ReportsPage() {
 
         const url = `${API_BASE}/reports/whatsapp-summary?format=${whatsappFormat}` + 
                     (idsToFetch.length > 0 ? `&pr_ids=${idsToFetch.join(",")}` : "&pr_ids=none");
-        const data = await fetchCachedJson<WhatsappSummary>(url, undefined, { ttlMs: 600_000, cacheKey: `reports:whatsapp-summary:${whatsappFormat}:${idsToFetch.join("-") || "none"}`, forceRefresh: force });
+        const data = await fetchCachedJson<WhatsappSummary>(url, undefined, { ttlMs: 60_000, cacheKey: `reports:whatsapp-summary:${whatsappFormat}:${idsToFetch.join("-") || "none"}`, forceRefresh: force });
         setWhatsappSummary(data);
         // Also preload daily profit for the spreadsheet button
         if (!dailyProfit) {
-            const dp = await fetchCachedJson<DailyProfit>(`${API_BASE}/reports/daily-profit`, undefined, { ttlMs: 600_000, cacheKey: "reports:daily-profit:latest" });
+            const dp = await fetchCachedJson<DailyProfit>(`${API_BASE}/reports/daily-profit`, undefined, { ttlMs: 60_000, cacheKey: "reports:daily-profit:latest" });
             setDailyProfit(dp);
         }
       }
@@ -660,7 +726,7 @@ export default function ReportsPage() {
 
   useEffect(() => {
     // Auth guard
-    fetchJson(`${API_BASE}/auth/me`).catch(() => router.push("/login"));
+    void sessionIsActive().then((active) => { if (!active) router.push("/login"); });
   }, [router]);
 
   useEffect(() => {
@@ -669,6 +735,30 @@ export default function ReportsPage() {
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [tab]);
+
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+
+  useEffect(() => {
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey?: string; data?: unknown }>).detail;
+      if (!detail?.cacheKey || detail.data === undefined) return;
+      const key = detail.cacheKey;
+      if (key === "reports:current-location-supervised-v2") setLocationRows(detail.data as LocationRow[]);
+      else if (key === "reports:current-location-summary-supervised-v5") setLocationSummary(detail.data as LocationSummary);
+      else if (key === PAYMENT_REQUESTS_CACHE_KEY) {
+        setPaymentRequests(detail.data as PaymentRequest[]);
+        setPaymentRequestsError("");
+      }
+      else if (key === `reports:finance-summary:${financePeriod}`) setFinanceSummary(detail.data as FinanceSummary);
+      else if (key === `reports:daily-profit:${dailyDate || "latest"}`) setDailyProfit(detail.data as DailyProfit);
+      else if (key === "reports:income-statement") setIncomeStatement(detail.data as IncomeStatement);
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
+    return () => window.removeEventListener("fleet-cache-updated", onUpdate);
+  }, [dailyDate, financePeriod]);
 
   useEffect(() => {
     const preloadTabs: Tab[] = [
@@ -694,6 +784,34 @@ export default function ReportsPage() {
       }
     }
   }, [tab, paymentRequests, selectedPrIds.length]);
+
+  useEffect(() => {
+    if (paymentSubtab !== "tracking") return;
+    let cancelled = false;
+    setTrackingLoading(true);
+    setTrackingError("");
+    const params = new URLSearchParams({
+      receivable_state: trackingReceivable,
+      has_trip: trackingTrip,
+      payment_status: trackingPayment,
+    });
+    fetchJson<PaymentTracking>(`${API_BASE}/reports/payment-tracking?${params.toString()}`)
+      .then((data) => {
+        if (!cancelled) setTracking(data);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setTracking(null);
+          setTrackingError(error instanceof Error ? error.message : "Payment tracking could not be loaded.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTrackingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [paymentSubtab, trackingReceivable, trackingTrip, trackingPayment]);
 
   const handleTabChange = (t: Tab) => {
     setTab(t);
@@ -772,6 +890,24 @@ export default function ReportsPage() {
     return rows.filter((r) =>
       Object.values(r).join(" ").toLowerCase().includes(q)
     );
+  };
+
+  const isPendingPlace = (value?: string | null) => /^\*\s*pending/i.test(String(value || "").trim());
+  const placeName = (value?: string | null) => {
+    const name = String(value || "").trim();
+    return name && !isPendingPlace(name) ? name : "";
+  };
+  const openTripLabel = (row: LocationRow) => {
+    const trip = String(row.reference || "").trim();
+    const from = placeName(row.departure_name);
+    const to = placeName(row.destination_name);
+    const route = from && to ? `${from} → ${to}` : to || from;
+    return [trip, route].filter(Boolean).join(" · ");
+  };
+  const locationEvidence = (row: LocationRow) => {
+    const note = String(row.current_location_note || "").trim();
+    if (note && !isPendingPlace(note)) return note;
+    return openTripLabel(row);
   };
 
   const compactGpsNote = (value?: string | null) => {
@@ -895,7 +1031,7 @@ export default function ReportsPage() {
     totalCell.font = { name: "Times New Roman", size: 11, italic: true, bold: true };
     totalCell.alignment = { horizontal: "center", vertical: "middle" };
 
-    const headers = ["No", "Location", "Vehicle", "Supervisor", "Driver", "Destination", "DB Note", "State", "Days"];
+    const headers = ["No", "Location", "Vehicle", "Supervisor", "Driver", "Open trip", "Evidence", "State", "Days"];
     const headerRow = sheet.addRow(headers);
     headerRow.eachCell((cell) => {
       cell.font = { name: "Times New Roman", size: 11, italic: true, bold: true };
@@ -930,8 +1066,8 @@ export default function ReportsPage() {
           vehicle.vehicle_plate || "N/A",
           vehicle.supervisor_name || "Unassigned",
           vehicle.driver_name || "Unassigned",
-          vehicle.destination_name || "",
-          vehicle.current_location_note || "",
+          openTripLabel(vehicle),
+          locationEvidence(vehicle),
           stateLabel(vehicle.state),
           vehicle.current_location_days ?? vehicle.days ?? 0,
         ]);
@@ -968,12 +1104,7 @@ export default function ReportsPage() {
       <Sidebar 
         currentView={"payments" as SidebarView}
         onViewChange={(v) => {
-          if (v === "overview") { window.location.href = "/"; }
-          else if (v === "reports") { window.location.href = "/reports"; }
-          else if (v === "finance") { window.location.href = "/finance"; }
-          else if (v === "payments") { window.location.href = "/payments"; }
-          else if (v === "map") { window.location.href = "/map"; }
-          else { window.location.href = `/?view=${v}`; }
+          router.push(v === "overview" ? "/" : v === "reports" ? "/reports" : v === "finance" ? "/finance" : v === "payments" ? "/payments" : v === "map" ? "/map" : `/?view=${v}`);
         }} 
         mobileOpen={mobileSidebarOpen} 
         onCloseMobile={() => setMobileSidebarOpen(false)}
@@ -994,6 +1125,7 @@ export default function ReportsPage() {
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <BackButton />
+          <SyncButton />
           <button className="btn" onClick={() => load(tab, true)}><RefreshCw size={16} /> Refresh</button>
           <button className="btn" id="theme-toggle" onClick={toggle}>
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
@@ -1026,6 +1158,7 @@ export default function ReportsPage() {
             onChange={(e) => setFilterText(e.target.value)}
             style={{ maxWidth: 320, minHeight: 36 }}
           />
+          {filterText.trim() && <LastSyncLabel searching />}
           {tab === "finance-summary" && (
             <select
               className="fleet-input"
@@ -1077,7 +1210,7 @@ export default function ReportsPage() {
               Export XLSX
             </button>
           )}
-          {loading && <span className="muted" style={{ fontSize: 13 }}>Loading…</span>}
+
         </div>
       )}
 
@@ -1138,7 +1271,7 @@ export default function ReportsPage() {
                 <div style={{ overflowX: "auto" }}>
                   <table className="fleet-table" style={{ fontStyle: 'normal' }}>
                     <thead>
-                      <tr>{["Vehicle", "Supervisor", "Driver", "Destination", "DB Note", "Dep. Date", "State", "Days"].map((h) => <th key={h}>{h}</th>)}</tr>
+                      <tr>{["Vehicle", "Supervisor", "Driver", "Open trip", "Evidence", "Dep. Date", "State", "Days"].map((h) => <th key={h}>{h}</th>)}</tr>
                     </thead>
                     <tbody>
                       {loc.vehicles.map((v, i) => (
@@ -1146,8 +1279,8 @@ export default function ReportsPage() {
                           <td>{v.vehicle_plate || "N/A"}</td>
                           <td>{v.supervisor_name || "Unassigned"}</td>
                           <td>{v.driver_name || "Unassigned"}</td>
-                          <td>{v.destination_name || "–"}</td>
-                          <td className="gps-note-cell">{compactGpsNote(v.current_location_note)}</td>
+                          <td>{v.trip_id ? <Link href={`/detail?journey_id=${encodeURIComponent(String(v.trip_id))}`}>{openTripLabel(v) || `Trip ${v.trip_id}`}</Link> : (openTripLabel(v) || "No open trip")}</td>
+                          <td>{locationEvidence(v) || "No location note"}</td>
                           <td className="location-date-cell">{v.departure_date || "–"}</td>
                           <td><span className={`pill ${normalizeState(v.state)}`}>{stateLabel(v.state)}</span></td>
                           <td>{v.current_location_days ?? v.days ?? 0}</td>
@@ -1202,7 +1335,15 @@ export default function ReportsPage() {
               >
                 All Requests
               </button>
+              <button
+                className={`payment-subtab${paymentSubtab === "tracking" ? " active" : ""}`}
+                onClick={() => setPaymentSubtab("tracking")}
+                type="button"
+              >
+                Paid / Unpaid
+              </button>
             </div>
+            {paymentSubtab !== "tracking" && (
             <div className="payment-toolbar">
               <div className="payment-toolbar-filters">
                 <select
@@ -1235,6 +1376,7 @@ export default function ReportsPage() {
                 </button>
               </div>
             </div>
+            )}
             {paymentRequestsError && (
               <div className="login-error payment-load-error">
                 Payment data is not loading from the live Odoo database. {paymentRequestsError}
@@ -1458,19 +1600,24 @@ export default function ReportsPage() {
                     {dailySupervisorRows.length === 0 ? (
                       <tr><td colSpan={9} className="empty">No preview rows for this filter.</td></tr>
                     ) : (
-                      dailySupervisorRows.slice(0, 80).map((row, index) => (
+                      dailySupervisorRows.map((row, index, rows) => {
+                        const supervisorSpan = repeatedGroupSpan(rows, index, (item) => item.supervisor || "Unassigned");
+                        const plateSpan = repeatedGroupSpan(rows, index, (item) => `${item.supervisor}|${item.vehicle}`);
+                        const routeSpan = repeatedGroupSpan(rows, index, (item) => `${item.supervisor}|${item.vehicle}|${item.route}`);
+                        return (
                         <tr key={`${row.requestId}-${index}`}>
-                          <td>{index + 1}</td>
-                          <td>{row.supervisor || "Unassigned"}</td>
-                          <td>{row.vehicle || "–"}</td>
-                          <td>{row.route || "–"}</td>
-                          <td>{row.item || row.description || "–"}</td>
-                          <td>{row.quantity}</td>
-                          <td>{money(row.amount)}</td>
-                          <td className="green">{money(row.lineTotal)}</td>
-                          <td>{row.state || "draft"} / Request {String(row.requestId)}</td>
+                          <td className="daily-report-no">{index + 1}</td>
+                          {supervisorSpan > 0 && <td className="daily-report-span" rowSpan={supervisorSpan}>{row.supervisor || "Unassigned"}</td>}
+                          {plateSpan > 0 && <td className="daily-report-span" rowSpan={plateSpan}>{row.vehicle || "–"}</td>}
+                          {routeSpan > 0 && <td className="daily-report-span" rowSpan={routeSpan}>{row.route || "–"}</td>}
+                          <td>{paymentRequestItemLines(row.item, row.description).map((line, lineIndex) => <div key={lineIndex}>{line}</div>)}</td>
+                          <td className="daily-report-center">{row.quantity}</td>
+                          <td className="daily-report-money">{money(row.amount)}</td>
+                          <td className="daily-report-money green">{money(row.lineTotal)}</td>
+                          <td></td>
                         </tr>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                   {dailySupervisorRows.length > 0 && (
@@ -1484,11 +1631,7 @@ export default function ReportsPage() {
                   )}
                 </table>
               </div>
-              {dailySupervisorRows.length > 80 && (
-                <div className="muted" style={{ fontSize: 12, paddingTop: 8 }}>
-                  Showing first 80 preview rows. Daily Supervisor XLSX includes all {dailySupervisorRows.length} rows.
-                </div>
-              )}
+
             </div>
             )}
             {paymentSubtab === "pscn" && (
@@ -1553,6 +1696,92 @@ export default function ReportsPage() {
                         </tr>
                       ))
                     )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            )}
+            {paymentSubtab === "tracking" && (
+            <div className="payment-preview-panel">
+              <div className="payment-preview-head">
+                <div>
+                  <div className="panel-title">Paid and Unpaid Receivables</div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>
+                    Every receivable counts directly as revenue, including unconfirmed and rows with no trip. Paid means the payment has an FT number.
+                  </div>
+                </div>
+              </div>
+              <div className="pscn-kpi-strip">
+                <div><strong>{tracking?.totals.count || 0}</strong><span>Rows</span></div>
+                <div><strong className="green">{money(tracking?.totals.paid_total || 0)}</strong><span>Paid</span></div>
+                <div><strong className="red">{money(tracking?.totals.unpaid_total || 0)}</strong><span>Unpaid</span></div>
+                <div><strong className="amber">{money(tracking?.totals.unconfirmed_total || 0)}</strong><span>Unconfirmed</span></div>
+                <div><strong>{tracking?.totals.with_trip || 0}</strong><span>Has trip</span></div>
+                <div><strong>{tracking?.totals.without_trip || 0}</strong><span>No trip</span></div>
+              </div>
+              <div className="payment-toolbar">
+                <div className="payment-toolbar-filters">
+                  <select className="fleet-input" value={trackingReceivable} onChange={(event) => setTrackingReceivable(event.target.value)} style={{ minHeight: 34 }} aria-label="Filter receivable confirmation">
+                    <option value="all">All receivables</option>
+                    <option value="unconfirmed">Receivable unconfirmed</option>
+                    <option value="confirmed">Receivable confirmed</option>
+                  </select>
+
+                  <select className="fleet-input" value={trackingTrip} onChange={(event) => setTrackingTrip(event.target.value)} style={{ minHeight: 34 }} aria-label="Filter trip link">
+                    <option value="all">Has trip or no trip</option>
+                    <option value="yes">Has trip</option>
+                    <option value="no">No trip</option>
+                  </select>
+                  <select className="fleet-input" value={trackingPayment} onChange={(event) => setTrackingPayment(event.target.value)} style={{ minHeight: 34 }} aria-label="Filter payment status">
+                    <option value="all">Paid and unpaid</option>
+                    <option value="paid">Paid</option>
+                    <option value="unpaid">Unpaid</option>
+                  </select>
+                  <input
+                    className="fleet-input payment-row-search"
+                    placeholder="Search rows..."
+                    value={filterText}
+                    onChange={(event) => setFilterText(event.target.value)}
+                    aria-label="Search payment tracking rows"
+                    style={{ minHeight: 34 }}
+                  />
+                </div>
+              </div>
+              {trackingError && <div className="login-error payment-load-error">{trackingError}</div>}
+              <div className="report-table-wrap payment-table-wrap">
+                <table className="fleet-table" id="payment-tracking-table">
+                  <thead>
+                    <tr>
+                      {["Receivable", "Confirmation", "Payment", "Amount", "Trip", "Vehicle", "Date"].map((heading) => (
+                        <th key={heading}>{heading}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(tracking?.rows || []).filter((row) => {
+                      const query = filterText.toLowerCase().trim();
+                      if (!query) return true;
+                      return Object.values(row).join(" ").toLowerCase().includes(query);
+                    }).length === 0 ? (
+                      <tr><td colSpan={7} className="empty">No receivables match these filters.</td></tr>
+                    ) : (tracking?.rows || []).filter((row) => {
+                      const query = filterText.toLowerCase().trim();
+                      if (!query) return true;
+                      return Object.values(row).join(" ").toLowerCase().includes(query);
+                    }).map((row) => (
+                      <tr key={row.id}>
+                        <td>
+                          <strong>{row.receivable_name}</strong>
+                          <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>{row.customer_name || "No customer"}</div>
+                        </td>
+                        <td><span className={`pill ${normalizeState(row.receivable_status)}`}>{row.receivable_status === "unconfirmed" ? "Unconfirmed" : "Confirmed"}</span></td>
+                        <td><span className={`pill ${normalizeState(row.payment_status)}`}>{row.payment_status === "paid" ? "Paid" : "Unpaid"}</span></td>
+                        <td className={row.payment_status === "paid" ? "green" : "amber"}>{money(row.amount_due)}</td>
+                        <td>{row.has_trip ? (row.trip_name || row.route || `Trip #${row.trip_id}`) : "No trip"}</td>
+                        <td>{row.vehicle_plate || "—"}</td>
+                        <td>{row.date || "—"}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1660,7 +1889,7 @@ export default function ReportsPage() {
               <div className="panel-body" style={{ display: "grid", gap: 12 }}>
                 {(
                   [
-                    ["Confirmed Receivables (Revenue)", money(incomeStatement.revenue_total), "green"],
+                    ["All Receivables (Revenue)", money(incomeStatement.revenue_total), "green"],
                     ["Approved Expenses", money(incomeStatement.expense_total), "red"],
                     ["Net Profit", money(incomeStatement.profit), incomeStatement.profit >= 0 ? "green" : "red"],
                     ["Receivable Count", incomeStatement.receivable_count, ""],

@@ -10,19 +10,16 @@ interface FinancialSummaryProps {
 
 export default function FinancialSummary({ data, trips }: FinancialSummaryProps) {
   const payment = data.payment_summary ?? {};
-  const revenue =
-    trips.reduce((s, t) => s + Number(t.total_revenue || 0), 0) ||
-    Number(payment.receivable_total || 0);
+  const revenue = Number(payment.receivable_total || 0) ||
+    trips.reduce((s, t) => s + Number(t.total_revenue || 0), 0);
   const expense =
     trips.reduce((s, t) => s + Number(t.total_expense || 0), 0) ||
     Number(payment.expense_total || 0);
   const profit = revenue - expense;
 
   const rows: [string, string, string][] = [
-    ["Confirmed Receivables", money(revenue), "green"],
+    ["All Receivables", money(revenue), "green"],
     ["Approved Expenses", money(expense), "red"],
-    ["Customer Paid", money(payment.customer_paid_total ?? 0), "green"],
-    ["Customer Pending", money(payment.customer_pending_total ?? 0), "red"],
     ["Net Profit", money(profit), profit >= 0 ? "green" : "red"],
     [
       "Profit Margin",

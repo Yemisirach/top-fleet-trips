@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   CheckCircle,
   Copy,
@@ -19,9 +19,12 @@ import {
   Truck,
   User,
 } from "lucide-react";
-import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
+import Sidebar, { WindowLogout, type SidebarView } from "@/components/layout/Sidebar";
+import { useFleetUser } from "@/hooks/useFleetUser";
 import { useTheme } from "@/hooks/useTheme";
-import { API_BASE, fetchCachedJson } from "@/lib/api";
+import { driverPhone, isSupervisor, scopeMayetVehicles, scopeTrips } from "@/lib/scope";
+import { API_BASE, DASHBOARD_CACHE_KEY, fetchCachedJson, formatSyncTime, readCachedJson } from "@/lib/api";
+import LastSyncLabel, { SyncButton, tripLastSync } from "@/components/layout/LastSync";
 import { resolveCityCoords } from "@/lib/cityCoords";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
@@ -88,6 +91,7 @@ const locationRowToTrip = (row: LocationRow): Trip => ({
   vehicle_brand: row.vehicle_brand,
   driver_name: row.driver_name,
   supervisor_name: row.supervisor_name,
+  driver_phone: row.driver_phone,
   origin: row.departure_name,
   destination: row.destination_name,
   current_location: row.current_location_name,
@@ -193,24 +197,23 @@ const getTripRoutePoints = (trip: Trip): [number, number][] => {
 };
 
 export default function MapPage() {
-  return (
-    <Suspense fallback={<div className="empty" style={{ padding: 60 }}>Loading...</div>}>
-      <MapContent />
-    </Suspense>
-  );
+  return <MapContent />;
 }
 
 function MapContent() {
   const { theme, toggle } = useTheme();
-  const params = useSearchParams();
-  const journeyIdParam = params.get("journey_id") || params.get("trip_id");
-  const vehicleParam = params.get("vehicle") || params.get("plate") || params.get("search");
+  const router = useRouter();
+  const [journeyIdParam, setJourneyIdParam] = useState<string | null>(null);
+  const [vehicleParam, setVehicleParam] = useState("");
+  const [fullRequested, setFullRequested] = useState(false);
+  const fleetUser = useFleetUser();
+  const fullMap = fullRequested && !isSupervisor(fleetUser);
 
   const [data, setData] = useState<DashboardSnapshot>({});
   const [allTrips, setAllTrips] = useState<Trip[]>([]);
   const [mayetVehicles, setMayetVehicles] = useState<MayetVehicle[]>([]);
-  const [selectedId, setSelectedId] = useState<string | number | null>(journeyIdParam);
-  const [vehicleSearch, setVehicleSearch] = useState(vehicleParam || "");
+  const [selectedId, setSelectedId] = useState<string | number | null>(null);
+  const [vehicleSearch, setVehicleSearch] = useState("");
   const [query, setQuery] = useState("");
   const [loadError, setLoadError] = useState("");
   const [selectedGps, setSelectedGps] = useState<GpsPayload | null>(null);
@@ -222,46 +225,91 @@ function MapContent() {
   const layerRef = useRef<unknown>(null);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedJourney = params.get("journey_id") || params.get("trip_id");
+    const requestedVehicle = params.get("vehicle") || params.get("plate") || params.get("search") || "";
+    setJourneyIdParam(requestedJourney);
+    setVehicleParam(requestedVehicle);
+    setFullRequested(params.get("full") === "1");
+    if (requestedJourney) setSelectedId(requestedJourney);
+    if (requestedVehicle) setVehicleSearch(requestedVehicle);
+    const cached = readCachedJson<DashboardSnapshot>(DASHBOARD_CACHE_KEY);
+    if (cached) {
+      const journeys = cached.vehicle_locations?.length
+        ? cached.vehicle_locations.map(locationRowToTrip)
+        : [];
+      setData(cached);
+      setAllTrips(journeys);
+    }
     fetchCachedJson<DashboardSnapshot>(
       `${API_BASE}/dashboard/full?mode=live`,
       undefined,
-      { ttlMs: 60_000, cacheKey: "dashboard:live", forceRefresh: true }
+      { ttlMs: 60_000, cacheKey: DASHBOARD_CACHE_KEY }
     )
       .then((snapshot) => {
         const journeys = snapshot.vehicle_locations?.length
           ? snapshot.vehicle_locations.map(locationRowToTrip)
           : [];
-        const requestedVehicle = mayetSearchTerm(vehicleParam || "");
+        const vehicleKey = mayetSearchTerm(requestedVehicle);
         const selected =
-          journeys.find((trip) => String(trip.id) === String(journeyIdParam)) ||
+          journeys.find((trip) => String(trip.id) === String(requestedJourney)) ||
           journeys.find((trip) => {
             const plate = tripPlate(trip);
-            return plate === vehicleParam || mayetSearchTerm(plate) === requestedVehicle;
+            return plate === requestedVehicle || mayetSearchTerm(plate) === vehicleKey;
           }) ||
           journeys[0];
 
         setData(snapshot);
         setAllTrips(journeys);
         setSelectedId(selected?.id || null);
-        setVehicleSearch(selected ? tripPlate(selected) : vehicleParam || "");
+        setVehicleSearch(selected ? tripPlate(selected) : requestedVehicle);
         setLoadError("");
       })
       .catch((err: unknown) => {
-        setLoadError(err instanceof Error ? err.message : "Unable to load live dashboard data.");
+        if (!cached) setLoadError(err instanceof Error ? err.message : "Unable to load live dashboard data.");
       });
 
+    const cachedCatalog = readCachedJson<MayetVehicleCatalog>("dashboard:mayet:vehicles");
+    if (cachedCatalog) setMayetVehicles(Array.isArray(cachedCatalog.vehicles) ? cachedCatalog.vehicles : []);
     fetchCachedJson<MayetVehicleCatalog>(
       `${API_BASE}/dashboard/mayet/vehicles`,
       undefined,
-      { ttlMs: 30_000, cacheKey: "dashboard:mayet:vehicles", forceRefresh: true }
+      { ttlMs: 60_000, cacheKey: "dashboard:mayet:vehicles" }
     )
       .then((catalog) => setMayetVehicles(Array.isArray(catalog.vehicles) ? catalog.vehicles : []))
       .catch(() => setMayetVehicles([]));
-  }, [journeyIdParam, vehicleParam]);
+  }, []);
 
+  useEffect(() => {
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey?: string; data?: DashboardSnapshot | MayetVehicleCatalog }>).detail;
+      if (!detail?.cacheKey || !detail.data) return;
+      if (detail.cacheKey === DASHBOARD_CACHE_KEY) {
+        const snapshot = detail.data as DashboardSnapshot;
+        const journeys = snapshot.vehicle_locations?.length
+          ? snapshot.vehicle_locations.map(locationRowToTrip)
+          : [];
+        setData(snapshot);
+        setAllTrips(journeys);
+        setLoadError("");
+      }
+      if (detail.cacheKey === "dashboard:mayet:vehicles") {
+        const catalog = detail.data as MayetVehicleCatalog;
+        setMayetVehicles(Array.isArray(catalog.vehicles) ? catalog.vehicles : []);
+      }
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
+    return () => window.removeEventListener("fleet-cache-updated", onUpdate);
+  }, []);
+
+  const scopedTrips = useMemo(() => scopeTrips(allTrips, fleetUser), [allTrips, fleetUser]);
+  const visibleMayet = useMemo(
+    () => scopeMayetVehicles(mayetVehicles, scopedTrips, fleetUser),
+    [mayetVehicles, scopedTrips, fleetUser],
+  );
   const selectedTrip = useMemo(
-    () => allTrips.find((trip) => String(trip.id) === String(selectedId)) || allTrips[0] || null,
-    [allTrips, selectedId]
+    () => scopedTrips.find((trip) => String(trip.id) === String(selectedId)) || scopedTrips[0] || null,
+    [scopedTrips, selectedId]
   );
 
   const selectedVehicleRef = useMemo(
@@ -270,23 +318,41 @@ function MapContent() {
   );
 
   useEffect(() => {
+    if (!selectedVehicleRef) return;
+    const cacheKey = `dashboard:gps:${selectedVehicleRef}`;
+    const cached = readCachedJson<GpsPayload>(cacheKey);
+    if (cached) setSelectedGps(cached);
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey?: string; data?: GpsPayload }>).detail;
+      if (detail?.cacheKey === cacheKey && detail.data) setSelectedGps(detail.data);
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
+    return () => window.removeEventListener("fleet-cache-updated", onUpdate);
+  }, [selectedVehicleRef]);
+
+  useEffect(() => {
     let cancelled = false;
     if (!selectedVehicleRef) {
       return;
     }
-    fetchCachedJson<GpsPayload>(
-      `${API_BASE}/dashboard/gps/${encodeURIComponent(selectedVehicleRef)}`,
-      undefined,
-      { ttlMs: 15_000, cacheKey: `dashboard:gps:${selectedVehicleRef}`, forceRefresh: true }
-    )
-      .then((payload) => {
-        if (!cancelled) setSelectedGps(payload);
-      })
-      .catch(() => {
-        if (!cancelled) setSelectedGps(null);
-      });
+    const pull = () => {
+      fetchCachedJson<GpsPayload>(
+        `${API_BASE}/dashboard/gps/${encodeURIComponent(selectedVehicleRef)}`,
+        undefined,
+        { ttlMs: 60_000, cacheKey: `dashboard:gps:${selectedVehicleRef}` }
+      )
+        .then((payload) => {
+          if (!cancelled) setSelectedGps(payload);
+        })
+        .catch(() => {
+          if (!cancelled) setSelectedGps(null);
+        });
+    };
+    pull();
+    const timer = window.setInterval(pull, 60_000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [selectedVehicleRef]);
 
@@ -324,8 +390,8 @@ function MapContent() {
     : "DB location pending";
 
   const activeTrips = useMemo(
-    () => allTrips.filter((trip) => isActiveTrip(trip) && hasDriver(trip)),
-    [allTrips]
+    () => scopedTrips.filter((trip) => isActiveTrip(trip) && hasDriver(trip)),
+    [scopedTrips]
   );
 
   const activeOrderTrips = useMemo(() => {
@@ -337,8 +403,8 @@ function MapContent() {
   }, [activeTrips, selectedTrip]);
 
   const unassignedTrips = useMemo(
-    () => allTrips.filter((trip) => isActiveTrip(trip) && !hasDriver(trip)),
-    [allTrips]
+    () => scopedTrips.filter((trip) => isActiveTrip(trip) && !hasDriver(trip)),
+    [scopedTrips]
   );
 
   const visibleTrips = useMemo(() => {
@@ -456,7 +522,7 @@ function MapContent() {
         });
       });
 
-      mayetVehicles.slice(0, 250).forEach((vehicle) => {
+      visibleMayet.slice(0, 250).forEach((vehicle) => {
         const point = mayetVehiclePoint(vehicle);
         if (!point) return;
         const plate = String(vehicle.plate || "Mayet vehicle");
@@ -480,7 +546,7 @@ function MapContent() {
           void fetchCachedJson<GpsPayload>(
             `${API_BASE}/dashboard/gps/${encodeURIComponent(vehicleRef)}`,
             undefined,
-            { ttlMs: 600_000, cacheKey: `dashboard:gps:${vehicleRef}` }
+            { ttlMs: 60_000, cacheKey: `dashboard:gps:${vehicleRef}` }
           )
             .then((payload) => {
               const location = gpsLocationLabel(payload) || mayetVehicleLocation(vehicle);
@@ -504,17 +570,30 @@ function MapContent() {
     return () => {
       mounted = false;
     };
-  }, [mapPoints, mayetVehicles, selectedTrip, selectedVehicleRef]);
+  }, [mapPoints, visibleMayet, selectedTrip, selectedVehicleRef]);
+
+  useEffect(() => {
+    return () => {
+      const map = mapInstanceRef.current as { remove?: () => void } | null;
+      try {
+        map?.remove?.();
+      } catch {
+        /* The map node is already gone when the page switches. */
+      }
+      mapInstanceRef.current = null;
+    };
+  }, []);
 
   const selectTrip = (trip: Trip) => {
     const plate = tripPlate(trip);
     setSelectedId(trip.id);
     setVehicleSearch(plate);
-    window.history.pushState(
-      {},
-      "",
-      `/map?journey_id=${encodeURIComponent(trip.id)}&vehicle=${encodeURIComponent(plate)}`
-    );
+    const next = new URLSearchParams({
+      journey_id: String(trip.id),
+      vehicle: plate,
+    });
+    if (fullMap) next.set("full", "1");
+    window.history.pushState({}, "", `/map?${next.toString()}`);
   };
 
   const copyPlate = (plate = vehicleSearch) => {
@@ -533,12 +612,7 @@ function MapContent() {
   };
 
   const nav = (view: SidebarView) => {
-    if (view === "overview") window.location.href = "/";
-    else if (view === "finance") window.location.href = "/finance";
-    else if (view === "reports") window.location.href = "/reports";
-    else if (view === "payments") window.location.href = "/payments";
-    else if (view === "map") window.location.href = "/map";
-    else window.location.href = `/?view=${view}`;
+    router.push(view === "overview" ? "/" : view === "finance" ? "/finance" : view === "reports" ? "/reports" : view === "payments" ? "/payments" : view === "map" ? "/map" : `/?view=${view}`);
   };
 
   return (
@@ -577,15 +651,34 @@ function MapContent() {
               placeholder="Search plate, driver, location"
               style={{ width: "100%", paddingLeft: 34, minHeight: 38 }}
             />
+            <div style={{ marginTop: 6 }}><LastSyncLabel searching={Boolean(query.trim())} /></div>
+            {query.trim() && (
+              <div className="search-sync-results" style={{ position: "absolute", zIndex: 5, top: "100%", left: 0, right: 0, marginTop: 8, background: "var(--panel)", padding: 8 }}>
+                {visibleTrips.slice(0, 6).map((trip) => (
+                  <button key={trip.id} type="button" onClick={() => selectTrip(trip)} style={{ display: "grid", textAlign: "left", gap: 2 }}>
+                    <strong>{tripPlate(trip)}</strong>
+                    <span>Last sync {formatSyncTime(tripLastSync(trip))}</span>
+                  </button>
+                ))}
+                {visibleTrips.length === 0 && <div className="empty">No saved matches.</div>}
+              </div>
+            )}
           </div>
+          <SyncButton />
           <button className="btn" onClick={toggle} title="Toggle theme">
             {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
           </button>
+          <WindowLogout />
           <button className="btn" onClick={() => openMayet()} disabled={!vehicleSearch} title="Open selected plate in Mayet">
             <ExternalLink size={16} /> Mayet
           </button>
-          <Link href="/" className="btn primary">
-            <LayoutDashboard size={16} /> Dashboard
+          {!isSupervisor(fleetUser) && (
+            <Link href={fullMap ? "/map" : "/map?full=1"} className="btn">
+              <MapPin size={16} /> {fullMap ? "Map list" : "Full map"}
+            </Link>
+          )}
+          <Link href={isSupervisor(fleetUser) ? "/supervisor" : "/"} className="btn primary">
+            <LayoutDashboard size={16} /> {isSupervisor(fleetUser) ? "My vehicles" : "Dashboard"}
           </Link>
         </div>
 
@@ -599,12 +692,12 @@ function MapContent() {
             style={{
               flex: 1,
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1fr) minmax(340px, 390px)",
+              gridTemplateColumns: fullMap ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(340px, 390px)",
               minHeight: 0,
               background: "var(--bg)",
             }}
           >
-            <main style={{ minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <main style={{ minHeight: 0, display: "flex", flexDirection: "column", position: "relative" }}>
               <div
                 style={{
                   display: "grid",
@@ -619,7 +712,7 @@ function MapContent() {
                   ["Active orders", activeTrips.length],
                   ["Unassigned", unassignedTrips.length],
                   ["Mapped vehicles", mapPoints.filter((point) => point.route.length).length],
-                  ["Total records", allTrips.length],
+                  ["Total records", scopedTrips.length],
                 ].map(([label, value]) => (
                   <div key={label} style={{ minWidth: 0 }}>
                     <div className="muted" style={{ fontSize: 11, textTransform: "uppercase" }}>{label}</div>
@@ -628,9 +721,16 @@ function MapContent() {
                 ))}
               </div>
               <div ref={mapRef} id="fleet-live-map" style={{ flex: 1, minHeight: 420 }} />
+              {fullMap && selectedTripForDisplay && (
+                <div style={{ position: "absolute", left: 16, bottom: 16, zIndex: 500, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, padding: 12, display: "grid", gap: 8, maxWidth: 320 }}>
+                  <strong>{tripPlate(selectedTripForDisplay)}</strong>
+                  <span className="muted">{selectedTripForDisplay.driver_name || "Unassigned driver"}</span>
+                  <CallDriverButton trip={selectedTripForDisplay} />
+                </div>
+              )}
             </main>
 
-            <aside
+            {!fullMap && <aside
               className="map-sidebar"
               style={{
                 borderLeft: "1px solid var(--border)",
@@ -681,15 +781,7 @@ function MapContent() {
                     <InfoRow icon={<Truck size={14} />} label="Vehicle" value={tripPlate(selectedTripForDisplay)} />
                     <InfoRow icon={<User size={14} />} label="Driver" value={selectedTripForDisplay.driver_name || "Unassigned"} />
                     <InfoRow icon={<User size={14} />} label="Supervisor" value={(selectedTripForDisplay as any).supervisor_name || (selectedTripForDisplay as any).supervisor || "—"} />
-                    {( (selectedTripForDisplay as any).driver_phone || (selectedTripForDisplay as any).phone ) && (
-                      <a
-                        href={`tel:${(selectedTripForDisplay as any).driver_phone || (selectedTripForDisplay as any).phone}` }
-                        className="fleet-btn"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-                      >
-                        <Phone size={14} /> Call
-                      </a>
-                    )}
+                    <CallDriverButton trip={selectedTripForDisplay} />
                     <InfoRow icon={<Navigation size={14} />} label="Route" value={buildJourneyRoute(selectedTripForDisplay)} />
                     <InfoRow icon={<MapPin size={14} />} label="DB Location" value={selectedDbLocationValue} />
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, paddingTop: 6 }}>
@@ -731,11 +823,27 @@ function MapContent() {
                   )}
                 </div>
               </section>
-            </aside>
+            </aside>}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function CallDriverButton({ trip }: { trip?: Trip | null }) {
+  const phone = driverPhone(trip);
+  if (!phone) {
+    return (
+      <button className="btn" type="button" disabled title="No driver phone is stored for this vehicle">
+        <Phone size={14} /> Call driver
+      </button>
+    );
+  }
+  return (
+    <a className="btn primary" href={`tel:${phone}`} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <Phone size={14} /> Call driver
+    </a>
   );
 }
 
@@ -801,6 +909,7 @@ function OrderRow({
         </div>
       </button>
       <div style={{ display: "flex", gap: 8 }}>
+        <CallDriverButton trip={trip} />
         <button className="btn" onClick={onCopy} title="Copy plate" style={{ flex: 1, minHeight: 34 }}>
           <Copy size={14} />
         </button>

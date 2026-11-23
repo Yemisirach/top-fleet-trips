@@ -1,0 +1,3 @@
+module.exports=[35829,a=>{"use strict";var b=a.i(18332);a.s(["default",0,function({children:a}){return(0,b.jsx)("html",{lang:"en",children:(0,b.jsx)("body",{children:a})})},"metadata",0,{title:"TOP Fleet",description:"Fleet management dashboard — Topwater Ethiopia",icons:{icon:[{url:"/favicon.ico"},{url:"/apple-icon.png"}],apple:"/apple-icon.png"}}])},36399,a=>{a.n(a.i(35829))}];
+
+//# sourceMappingURL=frontend_src_app_layout_tsx_1-ox5sr._.js.map

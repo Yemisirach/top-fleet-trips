@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.core.server_cache import cache_get, cache_get_stale, cache_set
 from app.services.fleet_odoo_service import get_fleet_trips, get_fleet_trip_by_id
 from app.models.trip import TripCreate, TripUpdate, ExpenseLine
 
@@ -34,11 +35,19 @@ def _trip_to_dict(trip) -> dict:
 async def list_trips(
     skip: int = Query(0, ge=0),
     limit: int = Query(500, ge=1, le=500),
+    refresh: bool = Query(False),
     db: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """List all trips from Odoo."""
+    cache_key = f"fleet:trips:list:v1:{skip}:{limit}"
+    if not refresh:
+        cached = cache_get(cache_key) or cache_get_stale(cache_key)
+        if cached is not None:
+            return cached
     trips = await get_fleet_trips(db, skip=skip, limit=limit)
-    return [_trip_to_dict(t) for t in trips]
+    response = [_trip_to_dict(t) for t in trips]
+    cache_set(cache_key, response, ttl_seconds=60)
+    return response
 
 
 @router.get("/{trip_id}")

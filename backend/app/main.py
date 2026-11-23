@@ -4,11 +4,24 @@ from fastapi.staticfiles import StaticFiles
 
 import asyncio
 import os
+from contextlib import asynccontextmanager, suppress
 
 from app.core.auth import user_from_request
 from app.routers import auth, catalog, dashboard, health, integrations, reports, trips, vehicles, journeys
+from app.routers import fleet_sync
+from app.services.fleet_store import store_loop
 
-app = FastAPI(title="Fleet Trips API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(store_loop())
+    yield
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+
+app = FastAPI(title="Fleet Trips API", version="0.1.0", lifespan=lifespan)
 
 # ==================== CORS Configuration ====================
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,12 +52,29 @@ async def auth_middleware(request: Request, call_next):
     ):
         return await call_next(request)
 
-    if not user_from_request(request):
+    user = user_from_request(request)
+    if not user:
         if path.startswith("/api/"):
             return JSONResponse({"detail": "Login required"}, status_code=401)
         return RedirectResponse("/login.html", status_code=303)
 
+    if user.get("role") == "supervisor" and _supervisor_blocked(path):
+        return JSONResponse({"detail": "Supervisors can only open assigned vehicles."}, status_code=403)
+
     return await call_next(request)
+
+
+def _supervisor_blocked(path: str) -> bool:
+    blocked = (
+        "/api/reports/finance",
+        "/api/reports/payment",
+        "/api/reports/daily-profit",
+        "/api/reports/yearly-profit",
+        "/api/reports/income",
+        "/api/reports/whatsapp",
+        "/api/reports/responsible",
+    )
+    return any(part in path for part in blocked)
 
 
 @app.exception_handler(asyncio.TimeoutError)
@@ -100,3 +130,4 @@ app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(journeys.router, prefix="/api", tags=["journeys"])
+app.include_router(fleet_sync.router, prefix="/api/fleet", tags=["fleet-sync"])

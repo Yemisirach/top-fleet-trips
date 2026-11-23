@@ -61,29 +61,77 @@ def _state_from_journey(states: list[str], closed: bool) -> str:
 
 
 TRIP_BASE_QUERY = """
-    WITH receivables AS (
+    WITH vehicle_latest_trip AS (
+        SELECT DISTINCT ON (vehicle_id)
+            vehicle_id,
+            id AS trip_id
+        FROM trip_trip
+        WHERE vehicle_id IS NOT NULL
+        ORDER BY vehicle_id, COALESCE(departure_date, create_date::date) DESC NULLS LAST, id DESC
+    ),
+    vehicle_latest_recv AS (
+        SELECT DISTINCT ON (tt.vehicle_id)
+            tt.vehicle_id,
+            rr.id AS receivable_id,
+            rr.trip_id AS source_trip_id,
+            rr.amount_due,
+            rr.state,
+            rr.payment_reference,
+            rr.customer_name
+        FROM trip_receivable rr
+        JOIN trip_trip tt ON tt.id = rr.trip_id
+        WHERE COALESCE(rr.amount_due, 0) <> 0
+        ORDER BY tt.vehicle_id, rr.date_created DESC NULLS LAST, rr.write_date DESC NULLS LAST, rr.id DESC
+    ),
+    moved_recv AS (
+        SELECT lr.receivable_id, lr.source_trip_id, lt.trip_id AS target_trip_id,
+               lr.amount_due, lr.state, lr.payment_reference, lr.customer_name
+        FROM vehicle_latest_recv lr
+        JOIN vehicle_latest_trip lt ON lt.vehicle_id = lr.vehicle_id
+        WHERE false
+          AND lt.trip_id <> lr.source_trip_id
+          AND NOT EXISTS (
+              SELECT 1 FROM trip_receivable own
+              WHERE own.trip_id = lt.trip_id
+                AND COALESCE(own.amount_due, 0) <> 0
+          )
+    ),
+    attributed_receivable AS (
+        SELECT rr.trip_id, rr.amount_due, rr.state, rr.payment_reference, rr.customer_name
+        FROM trip_receivable rr
+        WHERE NOT EXISTS (SELECT 1 FROM moved_recv m WHERE m.receivable_id = rr.id)
+        UNION ALL
+        SELECT m.target_trip_id, m.amount_due, m.state, m.payment_reference, m.customer_name
+        FROM moved_recv m
+    ),
+    receivables AS (
         SELECT
             trip_id,
             COALESCE(SUM(amount_due), 0) AS total_receivable,
             COALESCE(SUM(
                 CASE
-                    WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                         OR COALESCE(payment_reference, '') <> ''
+                    WHEN COALESCE(payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
                     THEN amount_due
                     ELSE 0
                 END
             ), 0) AS paid_amount,
             COALESCE(SUM(
                 CASE
-                    WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                         OR COALESCE(payment_reference, '') <> ''
+                    WHEN COALESCE(payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
                     THEN 0
                     ELSE amount_due
                 END
             ), 0) AS pending_amount,
+            COALESCE(SUM(
+                CASE
+                    WHEN LOWER(COALESCE(state, '')) NOT IN ('confirmed', 'approved', 'paid', 'done', 'posted', 'reconciled')
+                    THEN amount_due
+                    ELSE 0
+                END
+            ), 0) AS unconfirmed_amount,
             COUNT(*) AS receivable_count,
             MAX(customer_name) AS customer_name
-        FROM trip_receivable
+        FROM attributed_receivable
         GROUP BY trip_id
     ),
     payment_requests AS (
@@ -122,7 +170,8 @@ TRIP_BASE_QUERY = """
             ) AS payment_request_lines
         FROM payment_request pr
         LEFT JOIN payment_request_line prl ON prl.payment_request_id = pr.id
-        WHERE COALESCE(pr.is_trip_payment, false) = true
+        WHERE pr.trip_id IS NOT NULL
+          AND COALESCE(pr.is_trip_payment, false) = true
         GROUP BY pr.trip_id
     ),
     trip_expenses AS (
@@ -146,12 +195,14 @@ TRIP_BASE_QUERY = """
         m.name AS model,
         b.name AS brand,
         driver.name AS driver_name,
+        COALESCE(NULLIF(driver.personal_mobile, ''), NULLIF(driver.mobile_phone, ''), NULLIF(driver.work_phone, '')) AS driver_phone,
         COALESCE(supervisor_partner.name, supervisor_user.login) AS supervisor_name,
         departure.name AS departure_name,
         destination.name AS destination_name,
         current_location.name AS current_location_name,
         r.customer_name AS customer_name,
         COALESCE(r.total_receivable, 0) AS total_revenue,
+        COALESCE(r.unconfirmed_amount, 0) AS unconfirmed_revenue,
         COALESCE(r.paid_amount, 0) AS paid_amount,
         COALESCE(r.pending_amount, 0) AS pending_amount,
         COALESCE(te.total_expense, pr.requested_amount, 0) AS total_expense,
@@ -202,6 +253,7 @@ VEHICLE_LOCATION_QUERY = """
         latest_trip.current_location_note,
         COALESCE(supervisor_partner.name, supervisor_user.login) AS supervisor_name,
         driver.name AS driver_name,
+        COALESCE(NULLIF(driver.personal_mobile, ''), NULLIF(driver.mobile_phone, ''), NULLIF(driver.work_phone, '')) AS driver_phone,
         departure.name AS departure_name,
         destination.name AS destination_name,
         current_location.name AS current_location_name,
@@ -342,6 +394,7 @@ def _location_row_to_journey(row: dict) -> dict:
         "vehicle_brand": row.get("brand") or row.get("model"),
         "name": row.get("reference") or row.get("vehicle_name") or row.get("vehicle_plate"),
         "driver_name": row.get("driver_name"),
+        "driver_phone": row.get("driver_phone"),
         "supervisor_name": row.get("supervisor_name"),
         "customer_name": None,
         "origin": row.get("departure_name"),
@@ -360,6 +413,7 @@ def _location_row_to_journey(row: dict) -> dict:
         "current_location_note": row.get("current_location_note") or (None if location_name == "Unknown" else location_name),
         "current_location_days": row.get("current_location_days") or 0,
         "total_revenue": 0.0,
+        "unconfirmed_revenue": 0.0,
         "total_expense": 0.0,
         "paid_amount": 0.0,
         "pending_payment": 0.0,
@@ -491,6 +545,7 @@ def build_journeys(rows: list[dict]) -> list[dict]:
                 "current_location": row.get("current_location_name"),
                 "current_location_note": row.get("current_location_note"),
                 "total_revenue": 0.0,
+                "unconfirmed_revenue": 0.0,
                 "total_expense": 0.0,
                 "paid_amount": 0.0,
                 "pending_payment": 0.0,
@@ -527,6 +582,7 @@ def build_journeys(rows: list[dict]) -> list[dict]:
             "write_date": row.get("write_date").isoformat() if row.get("write_date") else None,
             "status": row.get("state"),
             "revenue": _as_float(row.get("total_revenue")),
+            "unconfirmed_revenue": _as_float(row.get("unconfirmed_revenue")),
             "expense": _as_float(row.get("total_expense")),
             "paid_amount": _as_float(row.get("paid_amount")),
             "pending_payment": _as_float(row.get("pending_amount")),
@@ -540,6 +596,7 @@ def build_journeys(rows: list[dict]) -> list[dict]:
         journey["trips"].append(leg)
         journey["destinations"].append(destination)
         journey["total_revenue"] += _as_float(row.get("total_revenue"))
+        journey["unconfirmed_revenue"] = _as_float(journey.get("unconfirmed_revenue")) + _as_float(row.get("unconfirmed_revenue"))
         journey["total_expense"] += _as_float(row.get("total_expense"))
         journey["paid_amount"] += _as_float(row.get("paid_amount"))
         journey["pending_payment"] += _as_float(row.get("pending_amount"))

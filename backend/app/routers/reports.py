@@ -1,16 +1,20 @@
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+import asyncio
 import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 import csv
 from io import StringIO
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_manager, require_user
-from app.core.server_cache import cache_get, cache_set
-from app.core.database import get_session
+from app.core.scope import scope_location_rows, scope_location_summary
+from app.core.server_cache import cache_get, cache_get_stale, cache_set
+from app.core.database import AsyncSessionLocal, get_session
 from app.services.journey_assembly import fetch_vehicle_location_rows
 
 router = APIRouter()
@@ -24,6 +28,39 @@ def _date_text(value) -> Optional[str]:
     if not value:
         return None
     return str(value)[:10]
+
+
+_ETHIOPIC_TO_JDN_OFFSET = 1724220
+
+
+def _gregorian_to_jdn(year: int, month: int, day: int) -> int:
+    a = (14 - month) // 12
+    y = year + 4800 - a
+    m = month + 12 * a - 3
+    return day + (153 * m + 2) // 5 + 365 * y + y // 4 - y // 100 + y // 400 - 32045
+
+
+def _jdn_to_gregorian(jdn: int) -> date:
+    a = jdn + 32044
+    b = (4 * a + 3) // 146097
+    c = a - (146097 * b) // 4
+    d = (4 * c + 3) // 1461
+    e = c - (1461 * d) // 4
+    m = (5 * e + 2) // 153
+    day = e - (153 * m + 2) // 5 + 1
+    month = m + 3 - 12 * (m // 10)
+    year = 100 * b + d - 4800 + (m // 10)
+    return date(year, month, day)
+
+
+def _ethiopian_to_jdn(year: int, month: int, day: int) -> int:
+    return day + (month - 1) * 30 + (year - 1) * 365 + (year // 4) + _ETHIOPIC_TO_JDN_OFFSET
+
+
+def _ethiopian_year_bounds(year: int) -> tuple[date, date]:
+    start = _jdn_to_gregorian(_ethiopian_to_jdn(year, 1, 1))
+    next_start = _jdn_to_gregorian(_ethiopian_to_jdn(year + 1, 1, 1))
+    return start, next_start - timedelta(days=1)
 
 
 def _location_sort_key(name: str, count: int = 0):
@@ -212,11 +249,12 @@ def _daily_profit_totals(rows: list[dict]) -> dict:
     posted_profit = sum(row["actual_net_profit"] for row in posted)
     return {
         "vehicle_count": len(rows),
-        "rent_total": sum(row["actual_daily_total_revenue"] for row in posted),
+        "rent_total": sum(row["actual_daily_total_revenue"] for row in rows),
         "cost_total": sum(row["daily_total_cost"] for row in rows),
-        "revenue_total": sum(row["actual_daily_total_revenue"] for row in posted),
-        "net_profit_total": posted_profit,
-        "daily_net_profit_total": posted_profit,
+        "revenue_total": sum(row["actual_daily_total_revenue"] for row in rows),
+        "unconfirmed_total": sum(row.get("unconfirmed_amount") or 0 for row in rows),
+        "net_profit_total": sum(row["actual_net_profit"] for row in rows),
+        "daily_net_profit_total": sum(row["actual_net_profit"] for row in rows),
         "pending_trip_count": len(pending),
         "pending_cost_total": sum(row["daily_total_cost"] for row in pending),
     }
@@ -233,95 +271,129 @@ async def _table_columns(db: AsyncSession, table_name: str) -> set[str]:
 
 
 @router.get("/current-location")
-async def current_location_report(db: AsyncSession = Depends(get_session)) -> list[dict]:
-    cache_key = "fleet:reports:current-location:v2"
-    cached = cache_get(cache_key)
-    if cached:
-        return cached
+async def current_location_report(
+    refresh: bool = Query(False),
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(require_user),
+) -> list[dict]:
+    cache_key = "fleet:reports:current-location:v3"
+    if not refresh:
+        cached = cache_get(cache_key) or cache_get_stale(cache_key)
+        if cached is not None:
+            return scope_location_rows(cached, user)
 
-    rows = await fetch_vehicle_location_rows(db, limit=1000)
-    response = [
-        {
-            "vehicle_id": row.get("vehicle_id"),
-            "trip_id": row.get("trip_id"),
-            "reference": row.get("reference"),
-            "vehicle_plate": row.get("vehicle_plate"),
-            "supervisor_name": row.get("supervisor_name"),
-            "driver_name": row.get("driver_name"),
-            "departure_name": row.get("departure_name"),
-            "destination_name": row.get("destination_name"),
-            "current_location_name": row.get("current_location_name") or row.get("location_name"),
-            "current_location_note": row.get("current_location_note"),
-            "departure_date": _date_text(row.get("departure_date")),
-            "arrival_date": _date_text(row.get("arrival_date")),
-            "write_date": _date_text(row.get("write_date")),
-            "create_date": _date_text(row.get("create_date")),
-            "days_as_of": _date_text(row.get("days_as_of")),
-            "days_basis": row.get("days_basis") or "none",
-            "state": row.get("state") or "available",
-            "current_location_days": row.get("current_location_days") or 0,
-        }
-        for row in rows
-    ]
-    cache_set(cache_key, response)
-    return response
+    try:
+        rows = await fetch_vehicle_location_rows(db, limit=1000)
+        response = [
+            {
+                "vehicle_id": row.get("vehicle_id"),
+                "trip_id": row.get("trip_id"),
+                "reference": row.get("reference"),
+                "vehicle_plate": row.get("vehicle_plate"),
+                "supervisor_name": row.get("supervisor_name"),
+                "driver_name": row.get("driver_name"),
+                "driver_phone": row.get("driver_phone"),
+                "departure_name": row.get("departure_name"),
+                "destination_name": row.get("destination_name"),
+                "current_location_name": row.get("current_location_name") or row.get("location_name"),
+                "current_location_note": row.get("current_location_note"),
+                "departure_date": _date_text(row.get("departure_date")),
+                "arrival_date": _date_text(row.get("arrival_date")),
+                "write_date": _date_text(row.get("write_date")),
+                "create_date": _date_text(row.get("create_date")),
+                "days_as_of": _date_text(row.get("days_as_of")),
+                "days_basis": row.get("days_basis") or "none",
+                "state": row.get("state") or "available",
+                "current_location_days": row.get("current_location_days") or 0,
+            }
+            for row in rows
+        ]
+        cache_set(cache_key, response, ttl_seconds=60)
+        return scope_location_rows(response, user)
+    except Exception:
+        saved = cache_get_stale(cache_key)
+        if saved is not None:
+            return scope_location_rows(saved, user)
+        raise HTTPException(status_code=503, detail="Live Odoo DB timed out.")
 
 
 @router.get("/current-location-summary")
-async def current_location_summary_report(db: AsyncSession = Depends(get_session)) -> dict:
-    cache_key = "fleet:reports:current-location-summary:v2"
-    cached = cache_get(cache_key)
-    if cached:
-        return cached
+async def current_location_summary_report(
+    refresh: bool = Query(False),
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(require_user),
+) -> dict:
+    cache_key = "fleet:reports:current-location-summary:v4"
+    if not refresh:
+        cached = cache_get(cache_key) or cache_get_stale(cache_key)
+        if cached is not None:
+            return scope_location_summary(cached, user)
 
-    rows = await fetch_vehicle_location_rows(db, limit=1000)
-    by_location: dict[str, list[dict]] = {}
-    for row in rows:
-        location_name = row.get("location_name") or "Unknown"
-        by_location.setdefault(location_name, []).append({
-            "vehicle_id": row.get("vehicle_id"),
-            "trip_id": row.get("trip_id"),
-            "reference": row.get("reference"),
-            "vehicle_plate": row.get("vehicle_plate"),
-            "supervisor_name": row.get("supervisor_name"),
-            "driver_name": row.get("driver_name"),
-            "state": row.get("state") or "available",
-            "destination_name": row.get("destination_name"),
-            "current_location_note": row.get("current_location_note"),
-            "departure_date": _date_text(row.get("departure_date")),
-            "arrival_date": _date_text(row.get("arrival_date")),
-            "write_date": _date_text(row.get("write_date")),
-            "create_date": _date_text(row.get("create_date")),
-            "days_as_of": _date_text(row.get("days_as_of")),
-            "days_basis": row.get("days_basis") or "none",
-            "days": row.get("current_location_days") or 0,
-        })
-    locations = [
-        {
-            "location_name": location_name,
-            "vehicle_count": len(vehicles),
-            "vehicles": vehicles,
+    try:
+        rows = await fetch_vehicle_location_rows(db, limit=1000)
+        by_location: dict[str, list[dict]] = {}
+        for row in rows:
+            location_name = row.get("location_name") or "Unknown"
+            by_location.setdefault(location_name, []).append({
+                "vehicle_id": row.get("vehicle_id"),
+                "trip_id": row.get("trip_id"),
+                "reference": row.get("reference"),
+                "vehicle_plate": row.get("vehicle_plate"),
+                "supervisor_name": row.get("supervisor_name"),
+                "driver_name": row.get("driver_name"),
+                "driver_phone": row.get("driver_phone"),
+                "state": row.get("state") or "available",
+                "departure_name": row.get("departure_name"),
+                "destination_name": row.get("destination_name"),
+                "current_location_note": row.get("current_location_note"),
+                "departure_date": _date_text(row.get("departure_date")),
+                "arrival_date": _date_text(row.get("arrival_date")),
+                "write_date": _date_text(row.get("write_date")),
+                "create_date": _date_text(row.get("create_date")),
+                "days_as_of": _date_text(row.get("days_as_of")),
+                "days_basis": row.get("days_basis") or "none",
+                "days": row.get("current_location_days") or 0,
+            })
+        locations = [
+            {
+                "location_name": location_name,
+                "vehicle_count": len(vehicles),
+                "vehicles": vehicles,
+            }
+            for location_name, vehicles in by_location.items()
+        ]
+        locations.sort(key=lambda item: _location_sort_key(item["location_name"], item["vehicle_count"]))
+        response = {
+            "locations": locations,
+            "total_locations": len(locations),
+            "total_vehicles": sum(item["vehicle_count"] for item in locations),
         }
-        for location_name, vehicles in by_location.items()
-    ]
-    locations.sort(key=lambda item: _location_sort_key(item["location_name"], item["vehicle_count"]))
-    response = {
-        "locations": locations,
-        "total_locations": len(locations),
-        "total_vehicles": sum(item["vehicle_count"] for item in locations),
-    }
-    cache_set(cache_key, response)
-    return response
+        cache_set(cache_key, response, ttl_seconds=60)
+        return scope_location_summary(response, user)
+    except Exception:
+        saved = cache_get_stale(cache_key)
+        if saved is not None:
+            return scope_location_summary(saved, user)
+        raise HTTPException(status_code=503, detail="Live Odoo DB timed out.")
 
 
 @router.get("/payment-requests")
-async def payment_request_report(db: AsyncSession = Depends(get_session)) -> list[dict]:
-    cache_key = "fleet:reports:payment-requests"
+async def payment_request_report():
+    cache_key = "fleet:reports:payment-requests:v2-trip"
     cached = cache_get(cache_key)
-    if cached:
+    if cached is not None:
         return cached
+    saved = cache_get_stale(cache_key)
+    if saved is not None:
+        return JSONResponse(content=saved, headers={"X-Fleet-Saved": "1"})
 
-    rows = await db.execute(text("""
+    async with AsyncSessionLocal() as db:
+        return await _load_payment_requests(db, cache_key)
+
+
+async def _load_payment_requests(db: AsyncSession, cache_key: str) -> list[dict]:
+    try:
+        rows = await db.execute(text("""
         WITH request_lines AS (
             SELECT
                 prl.payment_request_id,
@@ -347,16 +419,14 @@ async def payment_request_report(db: AsyncSession = Depends(get_session)) -> lis
                 COALESCE(SUM(amount_due), 0) AS receivable_total,
                 COALESCE(SUM(
                     CASE
-                        WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                             OR COALESCE(payment_reference, '') <> ''
+                        WHEN COALESCE(payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
                         THEN amount_due
                         ELSE 0
                     END
                 ), 0) AS paid_amount,
                 COALESCE(SUM(
                     CASE
-                        WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                             OR COALESCE(payment_reference, '') <> ''
+                        WHEN COALESCE(payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
                         THEN 0
                         ELSE amount_due
                     END
@@ -396,14 +466,20 @@ async def payment_request_report(db: AsyncSession = Depends(get_session)) -> lis
         LEFT JOIN hr_employee driver ON t.driver_id = driver.id
         LEFT JOIN res_users req_user ON pr.create_uid = req_user.id
         LEFT JOIN res_partner requester ON req_user.partner_id = requester.id
-        WHERE COALESCE(pr.is_trip_payment, false) = true
+        WHERE pr.trip_id IS NOT NULL
+          AND COALESCE(pr.is_trip_payment, false) = true
         ORDER BY COALESCE(pr.date, pr.create_date::date) DESC NULLS LAST, pr.create_date DESC NULLS LAST
         LIMIT 500
     """))
-    live_requests = [
-        _payment_summary_from_row(row)
-        for row in rows.fetchall()
-    ]
+        live_requests = [
+            _payment_summary_from_row(row)
+            for row in rows.fetchall()
+        ]
+    except Exception:
+        saved = cache_get_stale(cache_key)
+        if saved is not None:
+            return JSONResponse(content=saved, headers={"X-Fleet-Saved": "1"})
+        raise HTTPException(status_code=503, detail="Live Odoo DB timed out.")
     cache_set(cache_key, live_requests)
     return live_requests
 
@@ -523,16 +599,14 @@ async def create_payment_request(
                 COALESCE(SUM(amount_due), 0) AS receivable_total,
                 COALESCE(SUM(
                     CASE
-                        WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                             OR COALESCE(payment_reference, '') <> ''
+                        WHEN COALESCE(payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
                         THEN amount_due
                         ELSE 0
                     END
                 ), 0) AS paid_amount,
                 COALESCE(SUM(
                     CASE
-                        WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                             OR COALESCE(payment_reference, '') <> ''
+                        WHEN COALESCE(payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
                         THEN 0
                         ELSE amount_due
                     END
@@ -613,16 +687,14 @@ async def payment_request_detail(pr_id: str, db: AsyncSession = Depends(get_sess
                     COALESCE(SUM(amount_due), 0) AS receivable_total,
                     COALESCE(SUM(
                         CASE
-                            WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                                 OR COALESCE(payment_reference, '') <> ''
+                            WHEN COALESCE(payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
                             THEN amount_due
                             ELSE 0
                         END
                     ), 0) AS paid_amount,
                     COALESCE(SUM(
                         CASE
-                            WHEN LOWER(COALESCE(state, '')) IN ('paid', 'done', 'posted', 'reconciled')
-                                 OR COALESCE(payment_reference, '') <> ''
+                            WHEN COALESCE(payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
                             THEN 0
                             ELSE amount_due
                         END
@@ -775,18 +847,42 @@ async def update_payment_request(
     return {"detail": "Updated", "id": pr_id, "state": new_state, "updated_by": user["username"]}
 
 
+@router.delete("/payment-request/{pr_id}")
+async def delete_payment_request(
+    pr_id: str,
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(require_manager),
+) -> dict:
+    """Delete a payment request and its line items (manager only)."""
+    try:
+        live_pr_id = int(pr_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Payment request not found")
+
+    # Delete line items first
+    await db.execute(text("DELETE FROM payment_request_line WHERE payment_request_id = :pr_id"), {"pr_id": live_pr_id})
+    # Delete the payment request
+    result = await db.execute(text("DELETE FROM payment_request WHERE id = :pr_id"), {"pr_id": live_pr_id})
+    await db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Payment request not found")
+    return {"detail": "Deleted", "id": pr_id, "deleted_by": user["username"]}
+
+
 @router.get("/finance-summary")
 async def finance_summary_report(
     period: str = Query("daily", pattern="^(daily|weekly|monthly|yearly)$"),
     group_by: str = Query("all", pattern="^(all|supervisor|vehicle)$"),
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
+    refresh: bool = Query(False),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
-    cache_key = f"fleet:reports:finance-summary:v4:{period}:{group_by}:{from_date or ''}:{to_date or ''}"
-    cached = cache_get(cache_key)
-    if cached:
-        return cached
+    cache_key = f"fleet:reports:finance-summary:v6:{period}:{group_by}:{from_date or ''}:{to_date or ''}"
+    if not refresh:
+        cached = cache_get(cache_key) or cache_get_stale(cache_key)
+        if cached is not None:
+            return cached
 
     date_trunc_unit = {"daily": "day", "weekly": "week", "monthly": "month", "yearly": "year"}[period]
     group_sql = {
@@ -795,12 +891,48 @@ async def finance_summary_report(
         "vehicle": "COALESCE(v.license_plate, 'Unassigned vehicle')",
     }[group_by]
     params = {"from_date": from_date, "to_date": to_date}
-    rows = await db.execute(text(f"""
-        WITH revenue AS (
-            SELECT
-                trip_id,
-                COALESCE(SUM(amount_due), 0) AS amount
-            FROM trip_receivable
+    try:
+        rows = await db.execute(text(f"""
+        WITH vehicle_latest_trip AS (
+            SELECT DISTINCT ON (vehicle_id)
+                vehicle_id,
+                id AS trip_id
+            FROM trip_trip
+            WHERE vehicle_id IS NOT NULL
+            ORDER BY vehicle_id, COALESCE(departure_date, create_date::date) DESC NULLS LAST, id DESC
+        ),
+        vehicle_latest_recv AS (
+            SELECT DISTINCT ON (tt.vehicle_id)
+                tt.vehicle_id,
+                rr.id AS receivable_id,
+                rr.trip_id AS source_trip_id,
+                rr.amount_due
+            FROM trip_receivable rr
+            JOIN trip_trip tt ON tt.id = rr.trip_id
+            WHERE COALESCE(rr.amount_due, 0) <> 0
+            ORDER BY tt.vehicle_id, rr.date_created DESC NULLS LAST, rr.write_date DESC NULLS LAST, rr.id DESC
+        ),
+        moved_recv AS (
+            SELECT lr.receivable_id, lt.trip_id AS trip_id, lr.amount_due
+            FROM vehicle_latest_recv lr
+            JOIN vehicle_latest_trip lt ON lt.vehicle_id = lr.vehicle_id
+            WHERE false
+              AND lt.trip_id <> lr.source_trip_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM trip_receivable own
+                  WHERE own.trip_id = lt.trip_id AND COALESCE(own.amount_due, 0) <> 0
+              )
+        ),
+        attributed_receivable AS (
+            SELECT rr.trip_id, rr.amount_due
+            FROM trip_receivable rr
+            WHERE NOT EXISTS (SELECT 1 FROM moved_recv m WHERE m.receivable_id = rr.id)
+            UNION ALL
+            SELECT m.trip_id, m.amount_due FROM moved_recv m
+        ),
+        revenue AS (
+            SELECT trip_id, COALESCE(SUM(amount_due), 0) AS amount
+            FROM attributed_receivable
             GROUP BY trip_id
         ),
         expense_requests AS (
@@ -849,6 +981,13 @@ async def finance_summary_report(
         ORDER BY period_start DESC, group_label
         LIMIT 120
     """), params)
+    except (asyncio.TimeoutError, Exception):
+        saved = cache_get_stale(cache_key)
+        if isinstance(saved, dict):
+            saved = dict(saved)
+            saved["_warning"] = "Showing the saved copy. The live database did not answer."
+            return saved
+        raise
     periods = []
     for row in rows.fetchall():
         revenue = _as_float(row.revenue_total)
@@ -880,12 +1019,50 @@ async def finance_summary_report(
 
 
 _FINANCE_TRIP_CTE = """
-WITH revenue AS (
+WITH vehicle_latest_trip AS (
+    SELECT DISTINCT ON (vehicle_id)
+        vehicle_id,
+        id AS trip_id
+    FROM trip_trip
+    WHERE vehicle_id IS NOT NULL
+    ORDER BY vehicle_id, COALESCE(departure_date, create_date::date) DESC NULLS LAST, id DESC
+),
+vehicle_latest_recv AS (
+    SELECT DISTINCT ON (tt.vehicle_id)
+        tt.vehicle_id,
+        rr.id AS receivable_id,
+        rr.trip_id AS source_trip_id,
+        rr.amount_due,
+        rr.customer_name
+    FROM trip_receivable rr
+    JOIN trip_trip tt ON tt.id = rr.trip_id
+    WHERE COALESCE(rr.amount_due, 0) <> 0
+    ORDER BY tt.vehicle_id, rr.date_created DESC NULLS LAST, rr.write_date DESC NULLS LAST, rr.id DESC
+),
+moved_recv AS (
+    SELECT lr.receivable_id, lt.trip_id AS trip_id, lr.amount_due, lr.customer_name
+    FROM vehicle_latest_recv lr
+    JOIN vehicle_latest_trip lt ON lt.vehicle_id = lr.vehicle_id
+    WHERE false
+      AND lt.trip_id <> lr.source_trip_id
+      AND NOT EXISTS (
+          SELECT 1 FROM trip_receivable own
+          WHERE own.trip_id = lt.trip_id AND COALESCE(own.amount_due, 0) <> 0
+      )
+),
+attributed_receivable AS (
+    SELECT rr.trip_id, rr.amount_due, rr.customer_name
+    FROM trip_receivable rr
+    WHERE NOT EXISTS (SELECT 1 FROM moved_recv m WHERE m.receivable_id = rr.id)
+    UNION ALL
+    SELECT m.trip_id, m.amount_due, m.customer_name FROM moved_recv m
+),
+revenue AS (
     SELECT
         trip_id,
         COALESCE(SUM(amount_due), 0) AS amount,
         MAX(customer_name) AS customer_name
-    FROM trip_receivable
+    FROM attributed_receivable
     GROUP BY trip_id
 ),
 expense_requests AS (
@@ -999,14 +1176,17 @@ def _finance_card(key: str, label: str, start, end, trips: int, revenue, cost, p
 @router.get("/finance-cards")
 async def finance_cards_report(
     as_of: Optional[date] = Query(None),
+    refresh: bool = Query(False),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
-    cache_key = f"fleet:reports:finance-cards:v2:{as_of or 'today'}"
-    cached = cache_get(cache_key)
-    if cached:
-        return cached
+    cache_key = f"fleet:reports:finance-cards:v4:{as_of or 'today'}"
+    if not refresh:
+        cached = cache_get(cache_key) or cache_get_stale(cache_key)
+        if cached is not None:
+            return cached
 
-    row = (await db.execute(text(_FINANCE_TRIP_CTE + """
+    try:
+        row = (await db.execute(text(_FINANCE_TRIP_CTE + """
         SELECT
             b.today,
             b.week_start,
@@ -1039,6 +1219,13 @@ async def finance_cards_report(
         LEFT JOIN trip_finance f ON true
         GROUP BY b.today, b.week_start, b.week_end, b.month_start, b.month_end, b.year_start, b.year_end
     """), {"as_of": as_of})).one()
+    except (asyncio.TimeoutError, Exception):
+        saved = cache_get_stale(cache_key)
+        if isinstance(saved, dict):
+            saved = dict(saved)
+            saved["_warning"] = "Showing the saved copy. The live database did not answer."
+            return saved
+        raise
     response = {
         "as_of": str(row.today),
         "timezone": "Africa/Addis_Ababa",
@@ -1049,7 +1236,7 @@ async def finance_cards_report(
             _finance_card("yearly", "Yearly profit", row.year_start, row.year_end, row.yearly_trips, row.yearly_revenue, row.yearly_cost, row.yearly_profit, row.yearly_pending),
         ],
     }
-    cache_set(cache_key, response, ttl_seconds=120)
+    cache_set(cache_key, response, ttl_seconds=60)
     return response
 
 
@@ -1066,7 +1253,7 @@ async def finance_trips_report(
     if window == "line" and period_start is None:
         raise HTTPException(status_code=400, detail="period_start is required")
 
-    cache_key = f"fleet:reports:finance-trips:v2:{window}:{period}:{period_start or ''}:{group_by}:{group_label}:{as_of or ''}"
+    cache_key = f"fleet:reports:finance-trips:v4:{window}:{period}:{period_start or ''}:{group_by}:{group_label}:{as_of or ''}"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -1105,13 +1292,13 @@ async def finance_trips_report(
     })
     trips = [_finance_trip_payload(row) for row in rows.fetchall()]
     response = {"window": window, "period": period, "trips": trips}
-    cache_set(cache_key, response, ttl_seconds=120)
+    cache_set(cache_key, response, ttl_seconds=60)
     return response
 
 
 @router.get("/finance-trips/{trip_id}")
 async def finance_trip_detail(trip_id: int, db: AsyncSession = Depends(get_session)) -> dict:
-    cache_key = f"fleet:reports:finance-trip-detail:v1:{trip_id}"
+    cache_key = f"fleet:reports:finance-trip-detail:v2:{trip_id}"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -1191,27 +1378,108 @@ async def finance_trip_detail(trip_id: int, db: AsyncSession = Depends(get_sessi
         }
         for item in payments.fetchall()
     ]
-    cache_set(cache_key, payload, ttl_seconds=120)
+    cache_set(cache_key, payload, ttl_seconds=60)
     return payload
 
 
 @router.get("/daily-profit")
 async def daily_profit_report(
     report_date: Optional[date] = Query(None),
+    refresh: bool = Query(False),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
-    cache_key = f"fleet:reports:daily-profit:v4:{report_date or 'latest'}"
-    cached = cache_get(cache_key)
-    if cached:
-        return cached
+    requested = report_date.isoformat() if report_date else None
+    cache_key = f"fleet:reports:daily-profit:v16:{requested or 'today'}"
+    lookup_keys = [cache_key]
+    if requested is None or requested == datetime.now(ZoneInfo("Africa/Addis_Ababa")).date().isoformat():
+        lookup_keys.append("fleet:reports:daily-profit:v16:today")
+    if not refresh:
+        for key in lookup_keys:
+            cached = cache_get(key) or cache_get_stale(key)
+            if cached is not None:
+                return cached
 
     rows_result = await db.execute(text("""
-        WITH revenue AS (
+        WITH vehicle_latest_trip AS (
+            SELECT DISTINCT ON (vehicle_id)
+                vehicle_id,
+                id AS trip_id
+            FROM trip_trip
+            WHERE vehicle_id IS NOT NULL
+            ORDER BY vehicle_id, COALESCE(departure_date, create_date::date) DESC NULLS LAST, id DESC
+        ),
+        vehicle_latest_recv AS (
+            SELECT DISTINCT ON (tt.vehicle_id)
+                tt.vehicle_id,
+                rr.id AS receivable_id,
+                rr.name AS receivable_name,
+                rr.trip_id AS source_trip_id,
+                rr.amount_due,
+                rr.state,
+                rr.customer_name,
+                tt.name AS source_trip_name,
+                COALESCE(tt.departure_date, tt.create_date)::date AS source_day
+            FROM trip_receivable rr
+            JOIN trip_trip tt ON tt.id = rr.trip_id
+            WHERE COALESCE(rr.amount_due, 0) <> 0
+            ORDER BY tt.vehicle_id, rr.date_created DESC NULLS LAST, rr.write_date DESC NULLS LAST, rr.id DESC
+        ),
+        moved_recv AS (
+            SELECT
+                lr.receivable_id,
+                lr.receivable_name,
+                lr.source_trip_id,
+                lt.trip_id AS target_trip_id,
+                lr.amount_due,
+                lr.state,
+                lr.customer_name,
+                lr.source_trip_name,
+                lr.source_day
+            FROM vehicle_latest_recv lr
+            JOIN vehicle_latest_trip lt ON lt.vehicle_id = lr.vehicle_id
+            WHERE false
+              AND lt.trip_id <> lr.source_trip_id
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM trip_receivable own
+                  WHERE own.trip_id = lt.trip_id
+                    AND COALESCE(own.amount_due, 0) <> 0
+              )
+        ),
+        attributed_receivable AS (
+            SELECT
+                rr.trip_id,
+                rr.amount_due,
+                rr.state,
+                rr.customer_name,
+                false AS moved
+            FROM trip_receivable rr
+            WHERE NOT EXISTS (
+                SELECT 1 FROM moved_recv m WHERE m.receivable_id = rr.id
+            )
+            UNION ALL
+            SELECT
+                m.target_trip_id,
+                m.amount_due,
+                m.state,
+                m.customer_name,
+                true AS moved
+            FROM moved_recv m
+        ),
+        revenue AS (
             SELECT
                 trip_id,
                 COALESCE(SUM(amount_due), 0) AS amount,
-                MAX(customer_name) AS customer_name
-            FROM trip_receivable
+                COALESCE(SUM(
+                    CASE
+                        WHEN LOWER(COALESCE(state, '')) NOT IN ('confirmed', 'approved', 'paid', 'done', 'posted', 'reconciled')
+                        THEN amount_due
+                        ELSE 0
+                    END
+                ), 0) AS unconfirmed_amount,
+                MAX(customer_name) AS customer_name,
+                BOOL_OR(moved) AS revenue_moved
+            FROM attributed_receivable
             GROUP BY trip_id
         ),
         expense_requests AS (
@@ -1230,6 +1498,13 @@ async def daily_profit_report(
             FROM trip_expense_line
             GROUP BY trip_id
         ),
+        revenue_notes AS (
+            SELECT
+                trip_id,
+                string_agg(DISTINCT NULLIF(btrim(description), ''), ' · ') AS revenue_description
+            FROM trip_revenue_line
+            GROUP BY trip_id
+        ),
         trip_rows AS (
             SELECT
                 t.id AS trip_id,
@@ -1239,8 +1514,18 @@ async def daily_profit_report(
                 departure.name AS departure_name,
                 destination.name AS destination_name,
                 COALESCE(r.amount, 0) AS revenue_total,
-                COALESCE(NULLIF(e.amount, 0), er.amount, 0) AS cost_total,
-                r.customer_name AS customer_name
+                COALESCE(r.unconfirmed_amount, 0) AS unconfirmed_amount,
+                COALESCE(e.amount, 0) AS cost_total,
+                r.customer_name AS customer_name,
+                NULL::numeric AS latest_receivable_amount,
+                NULL::text AS latest_receivable_state,
+                NULL::text AS latest_receivable_trip,
+                NULL::date AS latest_receivable_day,
+                NULL::text AS counted_from_receivable,
+                NULL::text AS counted_from_trip,
+                NULL::date AS counted_from_day,
+                NULL::text AS source_note,
+                notes.revenue_description
             FROM trip_trip t
             LEFT JOIN fleet_vehicle v ON t.vehicle_id = v.id
             LEFT JOIN hr_employee driver ON t.driver_id = driver.id
@@ -1248,46 +1533,124 @@ async def daily_profit_report(
             LEFT JOIN trip_location destination ON t.destination_id = destination.id
             LEFT JOIN revenue r ON r.trip_id = t.id
             LEFT JOIN expenses e ON e.trip_id = t.id
-            LEFT JOIN expense_requests er ON er.trip_id = t.id
+            LEFT JOIN revenue_notes notes ON notes.trip_id = t.id
             WHERE COALESCE(t.departure_date, t.create_date) IS NOT NULL
-              AND (COALESCE(r.amount, 0) <> 0 OR COALESCE(NULLIF(e.amount, 0), er.amount, 0) <> 0)
+              AND (COALESCE(r.amount, 0) <> 0 OR COALESCE(e.amount, 0) <> 0)
+        ),
+        created_requests AS (
+            SELECT
+                pr.id AS payment_request_id,
+                pr.name AS payment_request_name,
+                pr.trip_id,
+                pr.requester_id,
+                (pr.create_date AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date AS request_day,
+                COALESCE(SUM(COALESCE(prl.total, prl.amount * COALESCE(prl.quantity, 1), pr.amount_birr, pr.amount, 0)), 0) AS amount,
+                string_agg(DISTINCT NULLIF(COALESCE(prl.description, prl.item, ''), ''), ' · ') AS line_note
+            FROM payment_request pr
+            LEFT JOIN payment_request_line prl ON prl.payment_request_id = pr.id
+            WHERE pr.trip_id IS NOT NULL
+            GROUP BY pr.id, pr.name, pr.trip_id, pr.requester_id, pr.create_date
+        ),
+        request_groups AS (
+            SELECT
+                trip_id,
+                request_day,
+                SUM(amount) AS amount,
+                string_agg(payment_request_name, ', ' ORDER BY payment_request_id) AS payment_request_name,
+                string_agg(DISTINCT NULLIF(line_note, ''), ' · ') AS line_note,
+                MIN(payment_request_id) AS payment_request_id
+            FROM created_requests
+            GROUP BY trip_id, request_day
         ),
         target AS (
             SELECT COALESCE(
                 :report_date,
-                MAX(trip_day) FILTER (WHERE trip_day <= CURRENT_DATE),
-                MAX(trip_day)
+                (now() AT TIME ZONE 'Africa/Addis_Ababa')::date
             ) AS report_day
+        ),
+        request_rows AS (
+            SELECT
+                COALESCE(t.id, -rg.payment_request_id) AS trip_id,
+                rg.request_day AS trip_day,
+                driver.name AS driver_name,
+                COALESCE(
+                    v.license_plate,
+                    NULLIF(substring(COALESCE(rg.line_note, '') from '[Pp]late[[:space:]]*[Nn]o[[:space:]]*([0-9]+)'), '')
+                ) AS plate_number,
+                departure.name AS departure_name,
+                destination.name AS destination_name,
+                COALESCE(r.amount, 0) AS revenue_total,
+                COALESCE(r.unconfirmed_amount, 0) AS unconfirmed_amount,
+                rg.amount AS cost_total,
+                r.customer_name AS customer_name,
+                NULL::numeric AS latest_receivable_amount,
+                NULL::text AS latest_receivable_state,
+                NULL::text AS latest_receivable_trip,
+                NULL::date AS latest_receivable_day,
+                NULL::text AS counted_from_receivable,
+                NULL::text AS counted_from_trip,
+                NULL::date AS counted_from_day,
+                NULL::text AS source_note,
+                notes.revenue_description
+            FROM request_groups rg
+            JOIN target ON rg.request_day = target.report_day
+            LEFT JOIN trip_trip t ON t.id = rg.trip_id
+            LEFT JOIN fleet_vehicle v ON t.vehicle_id = v.id
+            LEFT JOIN hr_employee driver ON t.driver_id = driver.id
+            LEFT JOIN trip_location departure ON t.departure_id = departure.id
+            LEFT JOIN trip_location destination ON t.destination_id = destination.id
+            LEFT JOIN revenue r ON r.trip_id = rg.trip_id
+            LEFT JOIN revenue_notes notes ON notes.trip_id = rg.trip_id
+            WHERE COALESCE(rg.amount, 0) <> 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM trip_rows existing
+                  JOIN target report_target ON existing.trip_day = report_target.report_day
+                  WHERE existing.trip_id = rg.trip_id
+              )
+        ),
+        report_rows AS (
+            SELECT trip_rows.*
             FROM trip_rows
+            JOIN target ON trip_rows.trip_day = target.report_day
+            UNION ALL
+            SELECT * FROM request_rows
         )
         SELECT
             ROW_NUMBER() OVER (ORDER BY plate_number NULLS LAST, driver_name NULLS LAST, trip_id) AS no,
-            trip_rows.*
-        FROM trip_rows, target
-        WHERE trip_rows.trip_day = target.report_day
+            report_rows.*
+        FROM report_rows
         ORDER BY no
         LIMIT 500
     """), {"report_date": report_date})
     rows = []
     for row in rows_result.fetchall():
         revenue = _as_float(row.revenue_total)
+        unconfirmed = _as_float(row.unconfirmed_amount)
         cost = _as_float(row.cost_total)
         receivable_posted = revenue > 0
-        profit = revenue - cost if receivable_posted else 0
+        profit = revenue - cost
         route_parts = [part for part in (row.departure_name, row.destination_name) if part]
         route = "-".join(route_parts) if route_parts else ""
+        note = ""
         rows.append({
             "no": row.no,
             "driver_name": row.driver_name or "Unassigned",
             "plate_number": row.plate_number or "N/A",
-            "rent_amount": revenue if receivable_posted else 0,
+            "rent_amount": revenue,
             "daily_total_cost": cost,
-            "actual_daily_total_revenue": revenue if receivable_posted else 0,
+            "actual_daily_total_revenue": revenue,
+            "unconfirmed_amount": unconfirmed,
+            "latest_receivable_amount": 0,
+            "latest_receivable_state": "",
+            "latest_receivable_trip": "",
+            "latest_receivable_day": None,
             "actual_net_profit": profit,
             "daily_net_profit": profit,
             "receivable_posted": receivable_posted,
-            "profit_note": "" if receivable_posted else "Receivable not posted",
+            "profit_note": note,
             "remarks": route,
+            "revenue_description": row.revenue_description or "",
             "trip_id": row.trip_id,
             "report_date": str(row.trip_day) if row.trip_day else None,
         })
@@ -1301,19 +1664,161 @@ async def daily_profit_report(
     return response
 
 
+@router.get("/yearly-profit")
+async def yearly_profit_report(
+    ethiopian_year: int = Query(...),
+    refresh: bool = Query(False),
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(require_user),
+) -> dict:
+    if user.get("role") == "supervisor":
+        raise HTTPException(status_code=403, detail="Supervisors cannot open this report")
+    if ethiopian_year < 1900 or ethiopian_year > 2200:
+        raise HTTPException(status_code=400, detail="Ethiopian year is out of range")
+    start, end = _ethiopian_year_bounds(ethiopian_year)
+    cache_key = f"fleet:reports:yearly-profit:v3:{ethiopian_year}"
+    if not refresh:
+        cached = cache_get(cache_key) or cache_get_stale(cache_key)
+        if cached is not None:
+            return cached
+    try:
+        vehicle_result = await db.execute(text("""
+            SELECT
+                v.id AS vehicle_id,
+                COALESCE(v.license_plate, '') AS plate_number,
+                COALESCE(m.name, '') AS vehicle_type,
+                COALESCE(driver.name, '') AS driver_name,
+                COALESCE(supervisor_partner.name, '') AS supervisor_name
+            FROM fleet_vehicle v
+            LEFT JOIN fleet_vehicle_model m ON v.model_id = m.id
+            LEFT JOIN hr_employee driver ON driver.id = v.driver_id
+            LEFT JOIN LATERAL (
+                SELECT fvs.user_id
+                FROM fleet_vehicle_supervisor fvs
+                WHERE fvs.vehicle_id = v.id
+                ORDER BY fvs.write_date DESC NULLS LAST, fvs.create_date DESC NULLS LAST, fvs.id DESC
+                LIMIT 1
+            ) vehicle_supervisor ON true
+            LEFT JOIN res_users supervisor_user ON supervisor_user.id = vehicle_supervisor.user_id
+            LEFT JOIN res_partner supervisor_partner ON supervisor_partner.id = supervisor_user.partner_id
+            WHERE COALESCE(v.active, true) = true
+              AND vehicle_supervisor.user_id IS NOT NULL
+            ORDER BY supervisor_partner.name NULLS LAST, driver.name NULLS LAST, v.license_plate NULLS LAST, v.id
+        """))
+        rows_result = await db.execute(text("""
+            SELECT
+                t.id AS trip_id,
+                v.id AS vehicle_id,
+                COALESCE(t.departure_date, t.create_date)::date AS trip_day,
+                COALESCE(driver.name, '') AS driver_name,
+                COALESCE(v.license_plate, '') AS plate_number,
+                COALESCE(m.name, '') AS vehicle_type,
+                COALESCE(supervisor_partner.name, '') AS supervisor_name,
+                COALESCE(r.amount, 0) AS revenue_total,
+                COALESCE(e.amount, 0) AS cost_total,
+                COALESCE(notes.revenue_description, '') AS revenue_description
+            FROM trip_trip t
+            LEFT JOIN fleet_vehicle v ON t.vehicle_id = v.id
+            LEFT JOIN fleet_vehicle_model m ON v.model_id = m.id
+            LEFT JOIN hr_employee driver ON t.driver_id = driver.id
+            LEFT JOIN LATERAL (
+                SELECT fvs.user_id
+                FROM fleet_vehicle_supervisor fvs
+                WHERE fvs.vehicle_id = t.vehicle_id
+                ORDER BY fvs.write_date DESC NULLS LAST, fvs.create_date DESC NULLS LAST, fvs.id DESC
+                LIMIT 1
+            ) vehicle_supervisor ON true
+            LEFT JOIN res_users supervisor_user ON supervisor_user.id = vehicle_supervisor.user_id
+            LEFT JOIN res_partner supervisor_partner ON supervisor_partner.id = supervisor_user.partner_id
+            LEFT JOIN (
+                SELECT trip_id, COALESCE(SUM(amount_due), 0) AS amount
+                FROM trip_receivable
+                GROUP BY trip_id
+            ) r ON r.trip_id = t.id
+            LEFT JOIN (
+                SELECT
+                    trip_id,
+                    COALESCE(SUM(COALESCE(total_expense, amount * COALESCE(quantity, 1), 0)), 0) AS amount
+                FROM trip_expense_line
+                GROUP BY trip_id
+            ) e ON e.trip_id = t.id
+            LEFT JOIN (
+                SELECT
+                    trip_id,
+                    string_agg(DISTINCT NULLIF(btrim(description), ''), ' · ') AS revenue_description
+                FROM trip_revenue_line
+                GROUP BY trip_id
+            ) notes ON notes.trip_id = t.id
+            WHERE COALESCE(t.departure_date, t.create_date)::date BETWEEN :start AND :end
+              AND (COALESCE(r.amount, 0) <> 0 OR COALESCE(e.amount, 0) <> 0)
+            ORDER BY supervisor_partner.name NULLS LAST, driver.name NULLS LAST, v.license_plate NULLS LAST, trip_day, t.id
+        """), {"start": start, "end": end})
+    except (asyncio.TimeoutError, Exception):
+        saved = cache_get_stale(cache_key)
+        if isinstance(saved, dict):
+            saved = dict(saved)
+            saved["_warning"] = "Showing the saved copy. The live database did not answer."
+            return saved
+        raise
+    vehicles = []
+    for row in vehicle_result.fetchall():
+        vehicles.append({
+            "vehicle_id": row.vehicle_id,
+            "plate_number": row.plate_number or "",
+            "vehicle_type": row.vehicle_type or "",
+            "driver_name": row.driver_name or "",
+            "supervisor_name": row.supervisor_name or "",
+        })
+    rows = []
+    for row in rows_result.fetchall():
+        rows.append({
+            "trip_id": row.trip_id,
+            "vehicle_id": row.vehicle_id,
+            "trip_day": str(row.trip_day),
+            "driver_name": row.driver_name or "",
+            "plate_number": row.plate_number or "",
+            "vehicle_type": row.vehicle_type or "",
+            "supervisor_name": row.supervisor_name or "",
+            "revenue_total": _as_float(row.revenue_total),
+            "cost_total": _as_float(row.cost_total),
+            "revenue_description": row.revenue_description or "",
+        })
+    response = {
+        "ethiopian_year": ethiopian_year,
+        "gregorian_start": start.isoformat(),
+        "gregorian_end": end.isoformat(),
+        "vehicles": vehicles,
+        "rows": rows,
+    }
+    cache_set(cache_key, response, ttl_seconds=60)
+    return response
+
+
 @router.get("/income-statement")
-async def income_statement_report(db: AsyncSession = Depends(get_session)) -> dict:
-    cache_key = "fleet:reports:income-statement"
-    cached = cache_get(cache_key)
-    if cached:
-        return cached
+async def income_statement_report(
+    refresh: bool = Query(False),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    cache_key = "fleet:reports:income-statement:v2"
+    if not refresh:
+        cached = cache_get(cache_key) or cache_get_stale(cache_key)
+        if cached is not None:
+            return cached
 
     row = (
         await db.execute(text("""
             WITH approved_receivables AS (
-                SELECT COALESCE(SUM(amount_due), 0) AS revenue_total, COUNT(*) AS receivable_count
+                SELECT
+                    COALESCE(SUM(amount_due), 0) AS revenue_total,
+                    COUNT(*) AS receivable_count,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(COALESCE(state, '')) NOT IN ('confirmed', 'approved', 'paid', 'done', 'posted', 'reconciled')
+                            THEN amount_due
+                            ELSE 0
+                        END
+                    ), 0) AS unconfirmed_total
                 FROM trip_receivable
-                WHERE LOWER(COALESCE(state, '')) IN ('confirmed', 'approved')
             ),
             approved_payment_lines AS (
                 SELECT
@@ -1330,6 +1835,7 @@ async def income_statement_report(db: AsyncSession = Depends(get_session)) -> di
                 (SELECT trip_count FROM trip_counts) AS trip_count,
                 (SELECT revenue_total FROM approved_receivables) AS revenue_total,
                 (SELECT receivable_count FROM approved_receivables) AS receivable_count,
+                (SELECT unconfirmed_total FROM approved_receivables) AS unconfirmed_total,
                 COALESCE((SELECT SUM(amount) FROM approved_payment_lines), 0) AS expense_total,
                 COALESCE((SELECT COUNT(*) FROM approved_payment_lines), 0) AS payment_request_count
         """))
@@ -1342,9 +1848,125 @@ async def income_statement_report(db: AsyncSession = Depends(get_session)) -> di
         "revenue_total": revenue_total,
         "profit": revenue_total - expense_total,
         "receivable_count": row.receivable_count or 0,
+        "unconfirmed_total": _as_float(row.unconfirmed_total),
         "payment_request_count": row.payment_request_count or 0,
     }
     cache_set(cache_key, response)
+    return response
+
+
+@router.get("/payment-tracking")
+async def payment_tracking_report(
+    receivable_state: str = Query("all", pattern="^(all|unconfirmed|confirmed)$"),
+    has_trip: str = Query("all", pattern="^(all|yes|no)$"),
+    payment_status: str = Query("all", pattern="^(all|paid|unpaid)$"),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    cache_key = f"fleet:reports:payment-tracking:v4-all-revenue:{receivable_state}:{has_trip}:{payment_status}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    rows_result = await db.execute(text("""
+        SELECT
+            r.id,
+            COALESCE(NULLIF(r.name, ''), 'REC-' || r.id::text) AS receivable_name,
+            COALESCE(NULLIF(r.state, ''), 'draft') AS state,
+            COALESCE(r.amount_due, 0) AS amount_due,
+            r.payment_reference,
+            r.customer_name,
+            r.date_created,
+            r.trip_id,
+            t.name AS trip_name,
+            v.license_plate AS vehicle_plate,
+            departure.name AS departure_name,
+            destination.name AS destination_name,
+            CASE
+                WHEN LOWER(COALESCE(r.state, '')) IN ('confirmed', 'approved', 'paid', 'done', 'posted', 'reconciled')
+                THEN 'confirmed'
+                ELSE 'unconfirmed'
+            END AS receivable_status,
+            CASE
+                WHEN COALESCE(r.payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
+                THEN 'paid'
+                ELSE 'unpaid'
+            END AS payment_status,
+            (r.trip_id IS NOT NULL) AS has_trip
+        FROM trip_receivable r
+        LEFT JOIN trip_trip t ON t.id = r.trip_id
+        LEFT JOIN fleet_vehicle v ON v.id = t.vehicle_id
+        LEFT JOIN trip_location departure ON t.departure_id = departure.id
+        LEFT JOIN trip_location destination ON t.destination_id = destination.id
+        WHERE (
+            :receivable_state = 'all'
+            OR (
+                :receivable_state = 'confirmed'
+                AND LOWER(COALESCE(r.state, '')) IN ('confirmed', 'approved', 'paid', 'done', 'posted', 'reconciled')
+            )
+            OR (
+                :receivable_state = 'unconfirmed'
+                AND LOWER(COALESCE(r.state, '')) NOT IN ('confirmed', 'approved', 'paid', 'done', 'posted', 'reconciled')
+            )
+        )
+          AND (
+            :has_trip = 'all'
+            OR (:has_trip = 'yes' AND r.trip_id IS NOT NULL)
+            OR (:has_trip = 'no' AND r.trip_id IS NULL)
+          )
+          AND (
+            :payment_status = 'all'
+            OR (
+                :payment_status = 'paid'
+                AND COALESCE(r.payment_reference, '') ~* 'FT[[:space:]]*[0-9]'
+            )
+            OR (
+                :payment_status = 'unpaid'
+                AND COALESCE(r.payment_reference, '') !~* 'FT[[:space:]]*[0-9]'
+            )
+          )
+        ORDER BY r.date_created DESC NULLS LAST, r.id DESC
+        LIMIT 500
+    """), {
+        "receivable_state": receivable_state,
+        "has_trip": has_trip,
+        "payment_status": payment_status,
+    })
+    rows = []
+    for item in rows_result.fetchall():
+        route_parts = [part for part in (item.departure_name, item.destination_name) if part]
+        amount = _as_float(item.amount_due)
+        paid = item.payment_status == "paid"
+        rows.append({
+            "id": item.id,
+            "receivable_name": item.receivable_name,
+            "state": item.state,
+            "amount_due": amount,
+            "paid_amount": amount if paid else 0,
+            "unpaid_amount": 0 if paid else amount,
+            "payment_reference": item.payment_reference or "",
+            "customer_name": item.customer_name or "",
+            "date": _date_text(item.date_created),
+            "trip_id": item.trip_id,
+            "trip_name": item.trip_name or "",
+            "vehicle_plate": item.vehicle_plate or "",
+            "route": " to ".join(route_parts),
+            "receivable_status": item.receivable_status,
+            "payment_status": item.payment_status,
+            "has_trip": bool(item.has_trip),
+        })
+    response = {
+        "rows": rows,
+        "totals": {
+            "count": len(rows),
+            "amount_total": sum(row["amount_due"] for row in rows),
+            "paid_total": sum(row["paid_amount"] for row in rows),
+            "unpaid_total": sum(row["unpaid_amount"] for row in rows),
+            "unconfirmed_total": sum(row["amount_due"] for row in rows if row["receivable_status"] == "unconfirmed"),
+            "with_trip": sum(1 for row in rows if row["has_trip"]),
+            "without_trip": sum(1 for row in rows if not row["has_trip"]),
+        },
+    }
+    cache_set(cache_key, response, ttl_seconds=60)
     return response
 
 
@@ -1353,11 +1975,22 @@ async def whatsapp_summary_report(
     format: str = Query("default", description="Format type: default, table, csv"),
     db: AsyncSession = Depends(get_session)
 ) -> dict:
-    cache_key = f"fleet:reports:whatsapp-summary:v2:{format}"
-    cached = cache_get(cache_key)
-    if cached:
-        return cached
+    payment_cache_key = f"fleet:reports:whatsapp-summary:payments:v3:{format}"
+    cached_payments = cache_get(payment_cache_key)
+    if cached_payments:
+        payment_lines_text = cached_payments.get("payment_requests_text") or ""
+    else:
+        payment_lines_text = await _whatsapp_payment_text(db)
+        cache_set(payment_cache_key, {"payment_requests_text": payment_lines_text}, ttl_seconds=60)
 
+    response = {
+        "payment_requests_text": payment_lines_text,
+        "current_location_text": await _current_location_report_text(db),
+    }
+    return response
+
+
+async def _whatsapp_payment_text(db: AsyncSession) -> str:
     expense_rows = await db.execute(text("""
         SELECT
             t.id,
@@ -1389,21 +2022,19 @@ async def whatsapp_summary_report(
         for i, trip in enumerate(trips, start=1):
             payment_lines.append(f"{i}, {trip.driver_name}")
             payment_lines.append(f"  Total Expenses: {_as_float(trip.total_expense):,.2f} Birr\n")
+    return "\n".join(payment_lines)
 
+
+async def _current_location_report_text(db: AsyncSession) -> str:
     loc_counts: dict[str, int] = {}
-    for row in await fetch_vehicle_location_rows(db, limit=1000):
+    rows = await fetch_vehicle_location_rows(db, limit=5000)
+    for row in rows:
         location_name = row.get("location_name") or "Unknown"
         loc_counts[location_name] = loc_counts.get(location_name, 0) + 1
     loc_lines = ["Current Location Report for all vehicles\n", "*Trailer Report*"]
     for location_name, vehicle_count in sorted(loc_counts.items(), key=lambda item: _location_sort_key(item[0], item[1])):
         loc_lines.append(f"{vehicle_count}    {location_name}")
-
-    response = {
-        "payment_requests_text": "\n".join(payment_lines),
-        "current_location_text": "\n".join(loc_lines)
-    }
-    cache_set(cache_key, response)
-    return response
+    return "\n".join(loc_lines)
 
 
 @router.get("/responsible-report")
@@ -1446,7 +2077,8 @@ async def responsible_report(
         LEFT JOIN hr_employee driver ON t.driver_id = driver.id
         LEFT JOIN res_users req_user ON pr.create_uid = req_user.id
         LEFT JOIN res_partner requester ON req_user.partner_id = requester.id
-        WHERE COALESCE(pr.is_trip_payment, false) = true
+        WHERE pr.trip_id IS NOT NULL
+          AND COALESCE(pr.is_trip_payment, false) = true
           AND LOWER(COALESCE(pr.state, '')) IN ('confirmed', 'approved', 'paid', 'done', 'posted')
         ORDER BY pr.date DESC NULLS LAST
         LIMIT 1000

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -11,10 +11,13 @@ import {
   Menu,
   Truck,
   Map,
+  MapPin,
   Users,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import { yieldFleetSync } from "@/lib/api";
+import { clearFleetUser, storedFleetUser } from "@/lib/scope";
 
 export type SidebarView =
   | "overview"
@@ -50,13 +53,47 @@ const NAV_ITEMS: {
 
 export default function Sidebar({ currentView, onViewChange, mobileOpen, onCloseMobile }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [role, setRole] = useState("");
   const router = useRouter();
+  const supervisor = role === "supervisor";
+
+  useEffect(() => {
+    const savedRole = storedFleetUser()?.role || "";
+    if (savedRole) setRole(savedRole);
+    let cancelled = false;
+    const warm = (nextRole: string) => {
+      if (!nextRole || cancelled) return;
+      const hrefs = nextRole === "supervisor"
+        ? ["/supervisor", "/supervisor?view=journeys", "/location", "/map"]
+        : ["/", "/?view=trips", "/?view=supervisors", "/map", "/payments", "/finance", "/reports"];
+      hrefs.forEach((href) => router.prefetch(href));
+    };
+    if (savedRole) warm(savedRole);
+    fetch("/api/auth/me", { credentials: "include" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        const nextRole = data?.user?.role || storedFleetUser()?.role || "";
+        if (!cancelled) setRole(nextRole);
+        warm(nextRole);
+      })
+      .catch(() => {
+        const nextRole = storedFleetUser()?.role || "";
+        if (!cancelled) setRole(nextRole);
+        warm(nextRole);
+      });
+    const timer = window.setInterval(() => warm(storedFleetUser()?.role || ""), 4 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [router]);
 
   const handleLogout = useCallback(async () => {
     await fetch("/api/auth/logout", {
       method: "POST",
       credentials: "include",
     });
+    clearFleetUser();
     router.push("/login");
   }, [router]);
 
@@ -83,8 +120,28 @@ export default function Sidebar({ currentView, onViewChange, mobileOpen, onClose
 
       {/* Nav */}
       <nav className="sidebar-nav" id="nav">
-        {!collapsed && <div className="nav-section">Dashboard</div>}
-        {NAV_ITEMS.map((item, i) => {
+        {!collapsed && <div className="nav-section">{supervisor ? "Assigned vehicles" : "Dashboard"}</div>}
+        {supervisor && (
+          <>
+            <Link href="/supervisor" prefetch className={`nav-btn${currentView === "overview" ? " active" : ""}`}>
+              <LayoutDashboard size={18} />
+              {!collapsed && <span className="nav-label">My vehicles</span>}
+            </Link>
+            <Link href="/supervisor?view=journeys" prefetch className={`nav-btn${currentView === "trips" ? " active" : ""}`}>
+              <Truck size={18} />
+              {!collapsed && <span className="nav-label">Journeys</span>}
+            </Link>
+            <Link href="/location" prefetch className={`nav-btn${currentView === "locations" ? " active" : ""}`}>
+              <MapPin size={18} />
+              {!collapsed && <span className="nav-label">Current location</span>}
+            </Link>
+            <Link href="/map" prefetch className={`nav-btn${currentView === "map" ? " active" : ""}`} onClick={() => yieldFleetSync()}>
+              <Map size={18} />
+              {!collapsed && <span className="nav-label">Map</span>}
+            </Link>
+          </>
+        )}
+        {!supervisor && NAV_ITEMS.map((item, i) => {
           const isActive =
             currentView === item.view &&
             (!item.status || item.status === "all");
@@ -93,6 +150,7 @@ export default function Sidebar({ currentView, onViewChange, mobileOpen, onClose
               key={i}
               className={`nav-btn${isActive ? " active" : ""}`}
               onClick={() => {
+                if (item.view === "map") yieldFleetSync();
                 onViewChange(item.view, item.status);
                 onCloseMobile?.();
               }}
@@ -103,28 +161,45 @@ export default function Sidebar({ currentView, onViewChange, mobileOpen, onClose
             </button>
           );
         })}
-        <Link href="/payments" className={`nav-btn${currentView === "payments" ? " active" : ""}`} title={collapsed ? "Payment Requests" : undefined}>
-          <CreditCard size={18} />
-          {!collapsed && <span className="nav-label">Payment Requests</span>}
-        </Link>
-        <Link href="/finance" className={`nav-btn${currentView === "finance" ? " active" : ""}`} title={collapsed ? "Finance Summary" : undefined}>
-          <Wallet size={18} />
-          {!collapsed && <span className="nav-label">Finance Summary</span>}
-        </Link>
-        <Link href="/reports" className={`nav-btn${currentView === "reports" ? " active" : ""}`} title={collapsed ? "Reports" : undefined}>
-          <FileText size={18} />
-          {!collapsed && <span className="nav-label">Reports</span>}
-        </Link>
+        {!supervisor && (
+          <>
+            <Link href="/payments" prefetch className={`nav-btn${currentView === "payments" ? " active" : ""}`} title={collapsed ? "Payment Requests" : undefined} onClick={() => yieldFleetSync()}>
+              <CreditCard size={18} />
+              {!collapsed && <span className="nav-label">Payment Requests</span>}
+            </Link>
+            <Link href="/finance" prefetch className={`nav-btn${currentView === "finance" ? " active" : ""}`} title={collapsed ? "Finance Summary" : undefined} onClick={() => yieldFleetSync()}>
+              <Wallet size={18} />
+              {!collapsed && <span className="nav-label">Finance Summary</span>}
+            </Link>
+            <Link href="/reports" prefetch className={`nav-btn${currentView === "reports" ? " active" : ""}`} title={collapsed ? "Reports" : undefined} onClick={() => yieldFleetSync()}>
+              <FileText size={18} />
+              {!collapsed && <span className="nav-label">Reports</span>}
+            </Link>
+          </>
+        )}
       </nav>
 
-      {/* Logout */}
-      <div style={{ padding: "10px 0", borderTop: "1px solid var(--line)" }}>
+      <div className="sidebar-logout">
         <button className="nav-btn" onClick={handleLogout} title={collapsed ? "Logout" : undefined}>
           <LogOut size={18} />
           {!collapsed && <span className="nav-label">Logout</span>}
         </button>
       </div>
     </aside>
+  );
+}
+
+export function WindowLogout() {
+  const router = useRouter();
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    clearFleetUser();
+    router.push("/login");
+  };
+  return (
+    <button className="btn window-logout" type="button" onClick={logout} title="Logout">
+      <LogOut size={16} /> Logout
+    </button>
   );
 }
 

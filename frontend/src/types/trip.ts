@@ -29,6 +29,7 @@ export interface Trip {
   vehicle_id?: string;
   vehicle_brand?: string;
   driver_name?: string;
+  driver_phone?: string;
   supervisor_name?: string;
   customer_name?: string;
   origin?: string;
@@ -44,6 +45,7 @@ export interface Trip {
   create_date?: string;
   write_date?: string;
   total_revenue?: number;
+  unconfirmed_revenue?: number;
   total_expense?: number;
   paid_amount?: number;
   pending_payment?: number;
@@ -118,6 +120,7 @@ export interface LocationRow {
   vehicle_brand?: string;
   supervisor_name?: string;
   driver_name?: string;
+  driver_phone?: string;
   departure_name?: string;
   destination_name?: string;
   current_location_name?: string;
@@ -241,11 +244,17 @@ export interface DailyProfitRow {
   rent_amount: number;
   daily_total_cost: number;
   actual_daily_total_revenue: number;
+  unconfirmed_amount?: number;
+  latest_receivable_amount?: number;
+  latest_receivable_state?: string;
+  latest_receivable_trip?: string;
+  latest_receivable_day?: string;
   actual_net_profit: number;
   daily_net_profit: number;
   receivable_posted?: boolean;
   profit_note?: string;
   remarks: string;
+  revenue_description?: string;
   trip_id?: string | number;
   report_date?: string;
 }
@@ -258,6 +267,7 @@ export interface DailyProfit {
     rent_total: number;
     cost_total: number;
     revenue_total: number;
+    unconfirmed_total?: number;
     net_profit_total: number;
     daily_net_profit_total: number;
     pending_trip_count?: number;

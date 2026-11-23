@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import PwaRegister from "@/components/PwaRegister";
+import FleetSync from "@/components/layout/FleetSync";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -38,6 +39,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <PwaRegister />
+        <FleetSync />
         {children}
       </body>
     </html>

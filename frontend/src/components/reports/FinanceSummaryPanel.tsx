@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { fetchCachedJson, fetchJson, API_BASE } from "@/lib/api";
+import { fetchCachedJson, fleetSavedNote, readCachedJson, API_BASE } from "@/lib/api";
 import { money } from "@/lib/formatters";
 import type { FinanceCards, FinanceCard, FinancePeriod, FinanceSummary, FinanceTrip, FinanceTripDetail } from "@/types/trip";
 
@@ -98,14 +98,14 @@ function TripDetailView({ detail }: { detail: FinanceTripDetail }) {
                 {detail.cost_source === "expense_lines"
                   ? detail.expense_lines.map((line, index) => (
                     <tr key={`${line.type_name}-${index}`}>
-                      <td>{line.type_name}{line.description ? ` · ${line.description}` : ""}</td>
+                      <td>{line.type_name || "Expense"}</td>
                       <td className="num">{line.quantity || "—"}</td>
                       <td className="num">{money(line.total)}</td>
                     </tr>
                   ))
                   : detail.payment_lines.map((line, index) => (
                     <tr key={`${line.request_id}-${index}`}>
-                      <td>{line.item || line.description || line.request_name}</td>
+                      <td>{line.item || line.request_name || "Item"}</td>
                       <td className="num">{line.quantity || "—"}</td>
                       <td className="num">{money(line.total)}</td>
                     </tr>
@@ -167,7 +167,7 @@ function TripList({
                 <td className="num green">{trip.receivable_posted ? money(trip.revenue_total) : "—"}</td>
                 <td className="num">{money(trip.cost_total)}</td>
                 <td className={`num ${trip.receivable_posted ? signedClass(trip.profit) : ""}`}>
-                  {trip.receivable_posted ? money(trip.profit) : "Waiting"}
+                  {trip.receivable_posted ? money(trip.profit) : "\u2014"}
                 </td>
               </tr>
               {open && (
@@ -204,40 +204,67 @@ export default function FinanceSummaryPanel() {
   useEffect(() => {
     let cancelled = false;
     const params = anchorDate ? `?as_of=${anchorDate}` : "";
-    fetchJson<FinanceCards>(`${API_BASE}/reports/finance-cards${params}`)
+    const cacheKey = `reports:finance-cards:${anchorDate || "latest"}`;
+    const cached = readCachedJson<FinanceCards>(cacheKey);
+    if (cached) setCards(cached);
+    fetchCachedJson<FinanceCards>(`${API_BASE}/reports/finance-cards${params}`, undefined, { ttlMs: 60_000, cacheKey })
       .then((data) => {
         if (cancelled) return;
         setCards(data);
         if (!anchorDate && data.as_of) setAnchorDate(data.as_of);
       })
-      .catch(() => { if (!cancelled) setCards(null); });
+      .catch(() => { if (!cancelled && !cached) setCards(null); });
     return () => { cancelled = true; };
   }, [anchorDate]);
 
   useEffect(() => {
     let cancelled = false;
-    setSummaryError("");
+    const cacheKey = `reports:finance-summary-v7:${period}:${groupBy}:${anchorDate}`;
+    const cached = readCachedJson<FinanceSummary>(cacheKey) || readCachedJson<FinanceSummary>(`reports:finance-summary-v7:${period}:${groupBy}`);
+    if (cached) {
+      setSummary(cached);
+      setSummaryError("");
+    }
+    const range = anchorDate ? periodRange(period, anchorDate) : null;
     fetchCachedJson<FinanceSummary>(
-      `${API_BASE}/reports/finance-summary?period=${period}&group_by=${groupBy}${anchorDate ? `&from_date=${periodRange(period, anchorDate).from}&to_date=${periodRange(period, anchorDate).to}` : ""}`,
+      `${API_BASE}/reports/finance-summary?period=${period}&group_by=${groupBy}${range ? `&from_date=${range.from}&to_date=${range.to}` : ""}`,
       undefined,
-      { ttlMs: 120_000, cacheKey: `reports:finance-summary-v6:${period}:${groupBy}:${anchorDate}`, forceRefresh: true },
+      { ttlMs: 60_000, cacheKey },
     )
-      .then((data) => { if (!cancelled) setSummary(data); })
+      .then((data) => { if (!cancelled) { setSummary(data); setSummaryError(""); } })
       .catch((error) => {
-        if (!cancelled) setSummaryError(error instanceof Error ? error.message : "Could not load finance summary");
+        if (cancelled || cached) return;
+        setSummaryError(fleetSavedNote(error));
       });
     return () => { cancelled = true; };
   }, [period, groupBy, anchorDate]);
 
+  useEffect(() => {
+    const summaryKey = `reports:finance-summary-v7:${period}:${groupBy}:${anchorDate}`;
+    const cardsKey = `reports:finance-cards:${anchorDate || "latest"}`;
+    const cachedSummary = readCachedJson<FinanceSummary>(summaryKey);
+    if (cachedSummary) setSummary(cachedSummary);
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey?: string; data?: FinanceSummary | FinanceCards }>).detail;
+      if (!detail?.cacheKey || !detail.data) return;
+      if (detail.cacheKey === summaryKey) setSummary(detail.data as FinanceSummary);
+      if (detail.cacheKey === cardsKey || detail.cacheKey === "reports:finance-cards") setCards(detail.data as FinanceCards);
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
+    return () => window.removeEventListener("fleet-cache-updated", onUpdate);
+  }, [anchorDate, groupBy, period]);
+
   const loadTrips = async (key: string, params: URLSearchParams) => {
     setTripLists((current) => ({ ...current, [key]: { status: "loading" } }));
     try {
-      const data = await fetchJson<{ trips: FinanceTrip[] }>(`${API_BASE}/reports/finance-trips?${params.toString()}`);
+      const cacheKey = `reports:finance-trips:${params.toString()}`;
+      const data = await fetchCachedJson<{ trips: FinanceTrip[] }>(`${API_BASE}/reports/finance-trips?${params.toString()}`, undefined, { ttlMs: 60_000, cacheKey });
       setTripLists((current) => ({ ...current, [key]: { status: "ready", data: data.trips } }));
     } catch (error) {
+      const saved = readCachedJson<{ trips: FinanceTrip[] }>(`reports:finance-trips:${params.toString()}`);
       setTripLists((current) => ({
         ...current,
-        [key]: { status: "error", error: error instanceof Error ? error.message : "Could not load trips" },
+        [key]: saved ? { status: "ready", data: saved.trips } : { status: "error", error: fleetSavedNote(error) },
       }));
     }
   };
@@ -291,12 +318,14 @@ export default function FinanceSummaryPanel() {
     if (details[tripId]?.status === "ready") return;
     setDetails((current) => ({ ...current, [tripId]: { status: "loading" } }));
     try {
-      const data = await fetchJson<FinanceTripDetail>(`${API_BASE}/reports/finance-trips/${tripId}`);
+      const cacheKey = `reports:finance-trip:${tripId}`;
+      const data = await fetchCachedJson<FinanceTripDetail>(`${API_BASE}/reports/finance-trips/${tripId}`, undefined, { ttlMs: 60_000, cacheKey });
       setDetails((current) => ({ ...current, [tripId]: { status: "ready", data } }));
     } catch (error) {
+      const saved = readCachedJson<FinanceTripDetail>(`reports:finance-trip:${tripId}`);
       setDetails((current) => ({
         ...current,
-        [tripId]: { status: "error", error: error instanceof Error ? error.message : "Could not load trip detail" },
+        [tripId]: saved ? { status: "ready", data: saved } : { status: "error", error: fleetSavedNote(error) },
       }));
     }
   };
@@ -361,7 +390,11 @@ export default function FinanceSummaryPanel() {
         </select>
         <p className="finance-help">Pick a day, month, or year. Click a card or a row to open the trips.</p>
       </div>
-      {(summary?._warning || summaryError) && <div className="login-error">{summary?._warning || summaryError}</div>}
+      {(summary?._warning || summaryError) && (
+        <p className="muted" style={{ margin: 0 }}>
+          {/timed out|saved copy|detail/i.test(summary?._warning || summaryError) ? "Showing the saved copy. The live database did not answer." : (summary?._warning || summaryError)}
+        </p>
+      )}
       <div className="finance-cards">
         {(cards?.cards || []).map((card) => {
           const open = openCard === card.key;

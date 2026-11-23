@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.server_cache import cache_get, cache_set
+from app.core.server_cache import cache_get, cache_get_stale, cache_set
 from app.core.database import get_session
 from app.services.journey_assembly import build_journeys, fetch_trip_rows, journeys_status_summary
 
@@ -115,9 +115,9 @@ async def get_journeys(
     db: AsyncSession = Depends(get_session),
 ):
     """Return grouped journeys derived from raw Odoo trips."""
-    cache_key = f"fleet:journeys:list:{plate or ''}:{driver or ''}:{from_date or ''}:{to_date or ''}:{status or ''}:{include_trips}"
+    cache_key = f"fleet:journeys:list:v3:{plate or ''}:{driver or ''}:{from_date or ''}:{to_date or ''}:{status or ''}:{include_trips}"
     if not refresh:
-        cached = cache_get(cache_key)
+        cached = cache_get(cache_key) or cache_get_stale(cache_key)
         if cached:
             return cached
 
@@ -151,7 +151,7 @@ async def get_journey_detail(
     db: AsyncSession = Depends(get_session),
 ):
     """Get detailed information about a specific journey."""
-    cache_key = f"fleet:journeys:detail:{journey_id}"
+    cache_key = f"fleet:journeys:detail:v3:{journey_id}"
     if not refresh:
         cached = cache_get(cache_key)
         if cached:

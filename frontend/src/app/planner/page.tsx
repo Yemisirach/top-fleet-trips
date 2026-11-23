@@ -19,7 +19,8 @@ import {
 } from "lucide-react";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import { useTheme } from "@/hooks/useTheme";
-import { API_BASE, fetchCachedJson, fetchJson } from "@/lib/api";
+import { API_BASE, DASHBOARD_CACHE_KEY, fetchCachedJson, readCachedJson, sessionIsActive } from "@/lib/api";
+import { SyncButton } from "@/components/layout/LastSync";
 import {
   buildJourneyRoute,
   mayetSearchTerm,
@@ -176,37 +177,61 @@ function FleetPlannerContent() {
   ]);
 
   useEffect(() => {
-    fetchJson(`${API_BASE}/auth/me`).catch(() => router.push("/login"));
+    void sessionIsActive().then((active) => { if (!active) router.push("/login"); });
   }, [router]);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      fetchCachedJson<DashboardSnapshot>(
-        `${API_BASE}/dashboard/full?mode=live`,
-        undefined,
-        { ttlMs: 60_000, cacheKey: "dashboard:live:journey-routes-full-odoo-v3", forceRefresh: true }
-      ),
-      fetchCachedJson<MayetVehicleCatalog>(
-        `${API_BASE}/dashboard/mayet/vehicles`,
-        undefined,
-        { ttlMs: 30_000, cacheKey: "dashboard:mayet:vehicles", forceRefresh: true }
-      ),
-    ])
-      .then(([snapshot, catalog]) => {
-        if (cancelled) return;
-        setData(snapshot);
-        setMayetVehicles(Array.isArray(catalog.vehicles) ? catalog.vehicles : []);
+    const pull = () => {
+      Promise.all([
+        fetchCachedJson<DashboardSnapshot>(
+          `${API_BASE}/dashboard/full?mode=live`,
+          undefined,
+          { ttlMs: 60_000, cacheKey: DASHBOARD_CACHE_KEY }
+        ),
+        fetchCachedJson<MayetVehicleCatalog>(
+          `${API_BASE}/dashboard/mayet/vehicles`,
+          undefined,
+          { ttlMs: 60_000, cacheKey: "dashboard:mayet:vehicles" }
+        ),
+      ])
+        .then(([snapshot, catalog]) => {
+          if (cancelled) return;
+          setData(snapshot);
+          setMayetVehicles(Array.isArray(catalog.vehicles) ? catalog.vehicles : []);
+          setError("");
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load fleet planning data.");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+    const cached = readCachedJson<DashboardSnapshot>(DASHBOARD_CACHE_KEY);
+    const cachedCatalog = readCachedJson<MayetVehicleCatalog>("dashboard:mayet:vehicles");
+    if (cached) {
+      setData(cached);
+      setLoading(false);
+    }
+    if (cachedCatalog) setMayetVehicles(Array.isArray(cachedCatalog.vehicles) ? cachedCatalog.vehicles : []);
+    pull();
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey?: string; data?: DashboardSnapshot | MayetVehicleCatalog }>).detail;
+      if (detail?.cacheKey === DASHBOARD_CACHE_KEY && detail.data) {
+        setData(detail.data as DashboardSnapshot);
         setError("");
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load fleet planning data.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        setLoading(false);
+      }
+      if (detail?.cacheKey === "dashboard:mayet:vehicles" && detail.data) {
+        const catalog = detail.data as MayetVehicleCatalog;
+        setMayetVehicles(Array.isArray(catalog.vehicles) ? catalog.vehicles : []);
+      }
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
     return () => {
       cancelled = true;
+      window.removeEventListener("fleet-cache-updated", onUpdate);
     };
   }, []);
 
@@ -329,6 +354,7 @@ function FleetPlannerContent() {
             <h1 style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>Fleet Agent & Logistics Plan</h1>
             <div className="muted" style={{ fontSize: 13 }}>Live trips, DB locations, payment risk, and dispatch recommendations</div>
           </div>
+          <SyncButton />
           <button className="btn" onClick={toggle} title="Toggle theme">
             {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
           </button>

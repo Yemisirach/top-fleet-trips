@@ -5,15 +5,18 @@ import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, Map, PanelRightOpen } from "lucide-react";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
-import AnalyticsStrip from "@/components/dashboard/AnalyticsStrip";
+import AnalyticsStrip, { addisTodayKey, daysInMonth, overviewFocusDate, overviewPeriodLabel, tripInCurrentPeriod, type OverviewPeriod } from "@/components/dashboard/AnalyticsStrip";
 import TripCard from "@/components/dashboard/TripCard";
 import TripTable from "@/components/dashboard/TripTable";
 import { useDashboard } from "@/hooks/useDashboard";
+import { useFleetUser } from "@/hooks/useFleetUser";
 import { useTheme } from "@/hooks/useTheme";
-import { buildJourneyRoute, buildMayetUrl, displayLocation, mayetSearchTerm, money, normalizeState, stateLabel, paymentLabel, tripDisplayName } from "@/lib/formatters";
+import { isSupervisor } from "@/lib/scope";
+import { buildJourneyRoute, buildMayetUrl, displayLocation, getJourneyDestinations, mayetSearchTerm, money, normalizeState, stateLabel, paymentLabel, tripDisplayName } from "@/lib/formatters";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { fetchJson, API_BASE } from "@/lib/api";
-import type { Trip } from "@/types/trip";
+import { API_BASE, fetchCachedJson, formatSyncTime, readCachedJson, sessionIsActive } from "@/lib/api";
+import LastSyncLabel, { tripLastSync } from "@/components/layout/LastSync";
+import type { DailyProfit, PaymentRequest, Trip } from "@/types/trip";
 
 const DashboardMap = dynamic(
   () => import("@/components/dashboard/DashboardMap"),
@@ -45,6 +48,25 @@ function tripLineLabel(item?: string, description?: string) {
     .trim() || "Item";
 }
 
+const OVERVIEW_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function setOverviewDatePart(current: string, part: { year?: string; month?: string; day?: string }): string {
+  const year = part.year || current.slice(0, 4);
+  const month = part.month || current.slice(5, 7);
+  const requestedDay = Number(part.day || current.slice(8, 10));
+  const day = String(Math.min(requestedDay, daysInMonth(Number(year), Number(month)))).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function overviewYearChoices(trips: Trip[], selected: string): string[] {
+  const years = new Set<string>([selected.slice(0, 4), addisTodayKey().slice(0, 4)]);
+  trips.forEach((trip) => {
+    const raw = trip.departure_date || trip.create_date || trip.arrival_date;
+    if (raw) years.add(String(raw).slice(0, 4));
+  });
+  return Array.from(years).filter((year) => /^\d{4}$/.test(year)).sort((a, b) => b.localeCompare(a));
+}
+
 const VIEW_META: Record<SidebarView, [string, string]> = {
   overview: ["Overview", "Fleet summary and recent activity"],
   trips: ["Journeys", "Grouped routes and trips"],
@@ -54,36 +76,117 @@ const VIEW_META: Record<SidebarView, [string, string]> = {
   map: ["Map", "Live map"],
   planner: ["Overview", "Fleet summary and recent activity"],
   reports: ["Reports", "Financial and operational reports"],
-  finance: ["Finance Summary", "Daily, weekly, and monthly posted profit"],
+  finance: ["Finance Summary", "Receivable counted once on the latest trip"],
 };
 
-function getInitialDashboardState(): { view: SidebarView; status: string } {
-  if (typeof window === "undefined") return { view: "overview", status: "all" };
+function getInitialDashboardState(): { view: SidebarView; status: string; route: string; scoped: boolean; period: OverviewPeriod; date: string } {
+  if (typeof window === "undefined") return { view: "overview", status: "all", route: "", scoped: false, period: "daily", date: addisTodayKey() };
   const params = new URLSearchParams(window.location.search);
   const nextView = params.get("view") as SidebarView | null;
+  const period = params.get("period");
   return {
     view: nextView && VIEW_META[nextView] && nextView !== "planner" ? nextView : "overview",
     status: params.get("status") || "all",
+    route: params.get("route") || "",
+    scoped: params.get("scoped") === "1",
+    period: period === "weekly" || period === "month" || period === "yearly" ? period : "daily",
+    date: params.get("date") || addisTodayKey(),
   };
 }
 
 export default function DashboardPage() {
   const router = useRouter();
+  const fleetUser = useFleetUser();
   const { theme, toggle: toggleTheme } = useTheme();
   const { data, allTrips, loading, load } = useDashboard();
-  const [view, setView] = useState<SidebarView>(() => getInitialDashboardState().view);
-  const [statusFilter, setStatusFilter] = useState(() => getInitialDashboardState().status);
+  const [view, setView] = useState<SidebarView>("overview");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [routeFilter, setRouteFilter] = useState("");
+  const [tripDateScope, setTripDateScope] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [expandedRawTripId, setExpandedRawTripId] = useState<string | null>(null);
+  const [overviewPeriod, setOverviewPeriod] = useState<OverviewPeriod>("daily");
+  const [overviewDate, setOverviewDate] = useState(addisTodayKey);
+  const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
+  const [dailyTotals, setDailyTotals] = useState<DailyProfit["totals"] | null>(null);
+
+  useEffect(() => {
+    const cacheKey = "reports:payment-requests:odoo-db-v6-trip";
+    const cached = readCachedJson<PaymentRequest[]>(cacheKey);
+    if (cached) setPaymentRequests(cached);
+    fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, {
+      ttlMs: 60_000,
+      cacheKey,
+    }).then(setPaymentRequests).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (view !== "overview" || !overviewDate) return;
+    let cancelled = false;
+    setDailyTotals(null);
+    const apply = (reportDate?: string | null, totals?: DailyProfit["totals"] | null) => {
+      if (cancelled || !totals || reportDate !== overviewDate) return;
+      setDailyTotals(totals);
+    };
+    const cached = readCachedJson<DailyProfit>(`reports:daily-profit:${overviewDate}`);
+    apply(cached?.report_date, cached?.totals);
+    const onCopy = (event: Event) => {
+      const detail = (event as CustomEvent<{ report_date?: string | null; totals?: DailyProfit["totals"] | null }>).detail;
+      apply(detail?.report_date, detail?.totals);
+    };
+    const onLocal = () => {
+      const saved = readCachedJson<DailyProfit>(`reports:daily-profit:${overviewDate}`);
+      apply(saved?.report_date, saved?.totals);
+      const payments = readCachedJson<PaymentRequest[]>("reports:payment-requests:odoo-db-v6-trip");
+      if (payments) setPaymentRequests(payments);
+    };
+    window.addEventListener("fleet-shared-copy", onCopy);
+    window.addEventListener("fleet-local-ready", onLocal);
+    window.addEventListener("fleet-cache-updated", onLocal);
+    fetchCachedJson<DailyProfit>(`${API_BASE}/reports/daily-profit?report_date=${overviewDate}`, undefined, {
+      ttlMs: 60_000,
+      cacheKey: `reports:daily-profit:${overviewDate}`,
+    }).then((report) => apply(report.report_date, report.totals)).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("fleet-shared-copy", onCopy);
+      window.removeEventListener("fleet-local-ready", onLocal);
+      window.removeEventListener("fleet-cache-updated", onLocal);
+    };
+  }, [overviewDate, view]);
 
   // Auth check
   useEffect(() => {
-    fetchJson(`${API_BASE}/auth/me`).catch(() => router.push("/login"));
+    void sessionIsActive().then((active) => { if (!active) router.push("/login"); });
   }, [router]);
 
   useEffect(() => {
-    load();
+    const applyUrl = () => {
+      const next = getInitialDashboardState();
+      setView(next.view);
+      setStatusFilter(next.status);
+      setRouteFilter(next.route);
+      setTripDateScope(next.scoped);
+      setOverviewPeriod(next.period);
+      setOverviewDate(next.date);
+    };
+    applyUrl();
+    window.addEventListener("popstate", applyUrl);
+    return () => window.removeEventListener("popstate", applyUrl);
+  }, []);
+
+  useEffect(() => {
+    if (!isSupervisor(fleetUser)) return;
+    const params = new URLSearchParams(window.location.search);
+    router.replace(params.get("view") === "trips" ? "/supervisor?view=journeys" : "/supervisor");
+  }, [fleetUser, router]);
+
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
+  useEffect(() => {
+    void loadRef.current();
   }, []);
 
   // Filtered trips
@@ -114,6 +217,15 @@ export default function DashboardPage() {
     }
     return result;
   }, [allTrips, searchValue, statusFilter]);
+
+  const scopedTrips = useMemo(() => {
+    if (!tripDateScope) return filteredTrips;
+    const focus = overviewFocusDate(overviewDate);
+    return filteredTrips.filter((trip) => {
+      if (!tripInCurrentPeriod(trip, overviewPeriod, focus)) return false;
+      return !routeFilter || getJourneyDestinations(trip) === routeFilter;
+    });
+  }, [filteredTrips, overviewDate, overviewPeriod, routeFilter, tripDateScope]);
 
   const rawTripRows = useMemo(() => data.all_trip_rows ?? [], [data.all_trip_rows]);
   const filteredRawTripRows = useMemo(() => {
@@ -215,28 +327,56 @@ export default function DashboardPage() {
     });
   };
 
+  const clearTripScope = () => {
+    setRouteFilter("");
+    setTripDateScope(false);
+  };
+
   const handleViewChange = useCallback((v: SidebarView, status?: string) => {
-    if (v === "overview") { router.push("/"); setView("overview"); setStatusFilter("all"); setMobileSidebarOpen(false); return; }
+    clearTripScope();
+    if (v === "overview" || v === "trips" || v === "supervisors" || v === "locations") {
+      setView(v);
+      setStatusFilter(status || "all");
+      setMobileSidebarOpen(false);
+      const url = v === "overview" ? "/" : `/?view=${v}`;
+      window.history.pushState(null, "", url);
+      return;
+    }
     if (v === "finance" || v === ("finance" as string)) { router.push("/finance"); return; }
     if (v === "reports" || v === ("reports" as string)) { router.push("/reports"); return; }
     if (v === "payments" || v === ("payments" as string)) { router.push("/payments"); return; }
     if (v === "map" || v === ("map" as string)) { router.push("/map"); return; }
-    if (v === "trips" || v === "supervisors" || v === "locations") router.push(`/?view=${v}`);
     setView(v);
     setStatusFilter(status || "all");
     setMobileSidebarOpen(false);
   }, [router]);
 
-  const handleOpenView = useCallback((v: string, status?: string) => {
-    if (v === "overview") { router.push("/"); setView("overview"); setStatusFilter("all"); return; }
+  const handleOpenView = useCallback((v: string, status?: string, extra?: { route?: string; scoped?: boolean }) => {
+    if (v === "overview") { router.push("/"); setView("overview"); setStatusFilter("all"); clearTripScope(); return; }
     if (v === "finance") { router.push("/finance"); return; }
     if (v === "reports") { router.push("/reports"); return; }
     if (v === "map") { router.push("/map"); return; }
     if (v === "payments") { router.push("/payments"); return; }
-    if (v === "trips" || v === "supervisors" || v === "locations") router.push(`/?view=${v}`);
+    if (v === "trips") {
+      const params = new URLSearchParams({ view: "trips", status: status || "all" });
+      if (extra?.scoped) {
+        params.set("scoped", "1");
+        params.set("period", overviewPeriod);
+        params.set("date", overviewDate);
+        if (extra.route) params.set("route", extra.route);
+      }
+      router.push(`/?${params.toString()}`);
+      setView("trips");
+      setStatusFilter(status || "all");
+      setRouteFilter(extra?.scoped ? extra.route || "" : "");
+      setTripDateScope(Boolean(extra?.scoped));
+      return;
+    }
+    if (v === "supervisors" || v === "locations") router.push(`/?view=${v}`);
     setView(v as SidebarView);
     setStatusFilter(status || "all");
-  }, [router]);
+    clearTripScope();
+  }, [overviewDate, overviewPeriod, router]);
 
   const [title, subtitle] = VIEW_META[view];
   const vehicleConflicts = data.vehicle_conflicts ?? [];
@@ -273,25 +413,86 @@ export default function DashboardPage() {
           }`}
           style={{ display: "grid", gap: 24 }}
         >
-          {loading && (
-            <div className="empty" style={{ padding: "48px 0", fontSize: 16 }}>
-              Loading dashboard…
+          {searchValue.trim() && (
+            <div className="panel">
+              <div className="panel-header">
+                <div className="panel-title">Search</div>
+                <LastSyncLabel searching />
+              </div>
+              <div className="panel-body search-sync-results">
+                {filteredTrips.slice(0, 12).map((trip) => (
+                  <a key={trip.id} href={`/detail?journey_id=${encodeURIComponent(String(trip.id))}`}>
+                    <strong>{trip.vehicle_plate || trip.id}</strong>
+                    <span>{trip.driver_name || "Unassigned"} · {trip.current_location || trip.current_location_note || trip.destination || "No location"}</span>
+                    <span>Last sync {formatSyncTime(tripLastSync(trip))}</span>
+                  </a>
+                ))}
+                {filteredTrips.length === 0 && <div className="empty">No saved matches for this search.</div>}
+              </div>
             </div>
           )}
 
           {/* ── Overview ── */}
-          {view === "overview" && !loading && (
+          {view === "overview" && (
             <>
-              <AnalyticsStrip data={data} trips={filteredTrips} onOpenView={handleOpenView} />
+              <div className="overview-period-bar">
+                <label htmlFor="overview-period">View</label>
+                <select
+                  id="overview-period"
+                  aria-label="Overview period"
+                  value={overviewPeriod}
+                  onChange={(event) => setOverviewPeriod(event.target.value as OverviewPeriod)}
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="month">Month</option>
+                  <option value="yearly">Yearly</option>
+                </select>
+                <label htmlFor="overview-year">Year</label>
+                <select
+                  id="overview-year"
+                  aria-label="Selected year"
+                  value={overviewDate.slice(0, 4)}
+                  onChange={(event) => setOverviewDate(setOverviewDatePart(overviewDate, { year: event.target.value }))}
+                >
+                  {overviewYearChoices(allTrips, overviewDate).map((year) => <option key={year} value={year}>{year}</option>)}
+                </select>
+                <label htmlFor="overview-month">Month</label>
+                <select
+                  id="overview-month"
+                  aria-label="Selected month"
+                  value={overviewDate.slice(5, 7)}
+                  onChange={(event) => setOverviewDate(setOverviewDatePart(overviewDate, { month: event.target.value }))}
+                >
+                  {OVERVIEW_MONTHS.map((name, index) => {
+                    const value = String(index + 1).padStart(2, "0");
+                    return <option key={value} value={value}>{name}</option>;
+                  })}
+                </select>
+                <label htmlFor="overview-day">Day</label>
+                <select
+                  id="overview-day"
+                  aria-label="Selected day"
+                  value={overviewDate.slice(8, 10)}
+                  onChange={(event) => setOverviewDate(setOverviewDatePart(overviewDate, { day: event.target.value }))}
+                >
+                  {Array.from({ length: daysInMonth(Number(overviewDate.slice(0, 4)), Number(overviewDate.slice(5, 7))) }, (_, index) => {
+                    const value = String(index + 1).padStart(2, "0");
+                    return <option key={value} value={value}>{value}</option>;
+                  })}
+                </select>
+              </div>
+              <AnalyticsStrip data={data} trips={filteredTrips} paymentRequests={paymentRequests} dailyTotals={overviewPeriod === "daily" ? dailyTotals : null} period={overviewPeriod} focusDate={overviewDate} onOpenView={handleOpenView} />
 
               {/* Recent trip table + financial summary */}
-              <div className="grid grid-cols-1 lg:grid-cols-[3fr,1fr] gap-4">
+              <div className="grid grid-cols-1 gap-4">
                 <div className="panel">
                   <div className="panel-header">
                     <div className="panel-title">Recent Journeys</div>
+                    <div className="muted">{overviewPeriodLabel(overviewPeriod, overviewFocusDate(overviewDate))}</div>
                   </div>
                   <div className="journey-table-panel-body overflow-x-auto">
-                    <TripTable trips={filteredTrips} limit={10} />
+                    <TripTable trips={filteredTrips.filter((trip) => tripInCurrentPeriod(trip, overviewPeriod, overviewFocusDate(overviewDate)))} limit={10} />
                   </div>
                 </div>
               </div>
@@ -400,7 +601,7 @@ export default function DashboardPage() {
           )}
 
           {/* ── Supervisors ── */}
-          {view === "supervisors" && !loading && (
+          {view === "supervisors" && (
             <div className="panel">
               <div className="panel-header">
                 <div className="panel-title">Supervisors</div>
@@ -447,16 +648,21 @@ export default function DashboardPage() {
           )}
 
           {/* ── Trips ── */}
-          {view === "trips" && !loading && (
+          {view === "trips" && (
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
                 <h2 id="trips-title" style={{ fontWeight: 900, fontSize: 18, margin: 0 }}>
                   {statusFilter === "trip_rows" ? "All Trips" : statusFilter === "active" ? "Active Journeys" : "Journeys"}
                 </h2>
+                {tripDateScope && (
+                  <span className="muted" style={{ fontSize: 13 }}>
+                    {overviewPeriodLabel(overviewPeriod, overviewFocusDate(overviewDate))}{routeFilter ? ` · ${routeFilter}` : ""}
+                  </span>
+                )}
                 <span id="search-meta" className="muted" style={{ fontSize: 13 }}>
                   {statusFilter === "trip_rows"
                     ? `${filteredRawTripRows.length} of ${rawTripRows.length} shown`
-                    : `${filteredTrips.length} of ${allTrips.length} shown`}
+                    : `${scopedTrips.length} of ${allTrips.length} shown`}
                 </span>
                 <select
                   id="status-select"
@@ -665,7 +871,7 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="panel" id="trip-list">
-                  <TripTable trips={filteredTrips} />
+                  <TripTable trips={scopedTrips} />
                 </div>
               )}
             </div>
@@ -680,7 +886,7 @@ export default function DashboardPage() {
               >
                 {(
                   [
-                    ["Confirmed Receivables", money(filteredTrips.reduce((s, t) => s + Number(t.total_revenue || 0), 0)), "green"],
+                    ["All Receivables", money(filteredTrips.reduce((s, t) => s + Number(t.total_revenue || 0), 0)), "green"],
                     ["Customer Paid", money(data.payment_summary?.customer_paid_total ?? 0), "green"],
                     ["Customer Pending", money(data.payment_summary?.customer_pending_total ?? 0), "red"],
                     ["Vendor Paid", money(data.payment_summary?.vendor_paid_total ?? 0), "green"],
@@ -728,7 +934,7 @@ export default function DashboardPage() {
           )} */}
 
           {/* ── Locations ── */}
-          {view === "locations" && !loading && (
+          {view === "locations" && (
             <div className="panel">
               <div className="panel-header"><div className="panel-title">Current Locations</div></div>
               <div style={{ overflowX: "auto" }}>

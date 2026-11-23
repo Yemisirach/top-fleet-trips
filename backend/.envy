@@ -1,0 +1,8 @@
+FLEET_AUTH_SECRET=rt/V/2…9hc=
+FLEET_USERS=danat.yoh:$2b$12$tlGp..E1m5hBAltlDw7ZmO1wuUFD656Tqj7ATwoHvt4C2tY302xGu,alula.yem:123:supervisor,barbra.sem:123:sales
+MAYET_URL=https://mayetgps.com/
+MAYET_USERNAME=top@mayet.com
+MAYET_PASSWORD=***
+DATABASE_URL=postgresql+asyncpg://testbed_user:testbed%40321@100.121.12.65:5432/TOP_2019
+ODOO_DATABASE_URL=postgresql+asyncpg://testbed_user:testbed%40321@100.121.12.65:5432/TOP_2019
+FLEET_INSECURE_DEV=0

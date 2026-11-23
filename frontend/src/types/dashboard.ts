@@ -26,6 +26,8 @@ export interface DashboardSnapshot {
   recent_journeys?: import("./trip").Trip[];
   all_trip_rows?: import("./trip").Trip[];
   vehicle_locations?: import("./trip").LocationRow[];
+  scope?: string;
+  supervisor_name?: string;
   journeys_by_status?: JourneyByStatus[];
   active_journey_count?: number;
   driver_conflict_count?: number;

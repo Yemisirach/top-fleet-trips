@@ -64,6 +64,38 @@ NAME_BY_LOGIN = {
     "getnet.topwhaterethiopia.com": "Getnet",
 }
 
+# Supervisor app logins. Username is the person's name. Password is the shared
+# supervisor password, stored as a bcrypt hash, never as plaintext.
+SUPERVISOR_PASSWORD_HASH = "$2b$12$q8v/gzCGvzVC6Jgmu5zqzOn/TdV9lYI3hd9WxPAGnMQM/v5ue2GVK"
+SUPERVISOR_NAMES = (
+    "Ketoran Tamana",
+    "Achalu Jifara",
+    "Dawit Gelana",
+    "Abebe Melaku",
+    "Bilisuma Getachew",
+    "Eyuel H.",
+    "Nigatu B.",
+    "Hikma K.",
+    "Minase Z.",
+    "Kerudin J.",
+)
+
+
+def _supervisor_login_keys(name: str) -> list[str]:
+    clean = " ".join(name.replace(".", " ").split()).lower()
+    parts = [part for part in clean.split(" ") if part]
+    keys = {name.strip().lower()}
+    if parts:
+        keys.add(".".join(parts))
+        keys.add(" ".join(parts))
+    return sorted(keys)
+
+
+for _supervisor_name in SUPERVISOR_NAMES:
+    for _login in _supervisor_login_keys(_supervisor_name):
+        ROLE_BY_LOGIN[_login] = "supervisor"
+        NAME_BY_LOGIN[_login] = _supervisor_name
+
 
 # Load users from environment; passwords MUST be bcrypt hashed externally.
 # Example env: FLEET_USERS=danat.yoh:$2b$12$...,alula.yem:$2b$12$...
@@ -100,6 +132,17 @@ else:
         "FLEET_USERS env var not set and FLEET_INSECURE_DEV is disabled. "
         "Set FLEET_USERS or run with FLEET_INSECURE_DEV=1 for local dev only."
     )
+
+for _supervisor_name in SUPERVISOR_NAMES:
+    for _login in _supervisor_login_keys(_supervisor_name):
+        USERS.setdefault(_login, {
+            "username": _login,
+            "password": SUPERVISOR_PASSWORD_HASH,
+            "role": "supervisor",
+            "name": _supervisor_name,
+        })
+        USERS[_login]["role"] = "supervisor"
+        USERS[_login]["name"] = _supervisor_name
 
 
 def _b64encode(data: bytes) -> str:

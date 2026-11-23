@@ -2,13 +2,14 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, LayoutDashboard, Map, Menu, Moon, Sun } from "lucide-react";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import { useTheme } from "@/hooks/useTheme";
-import { fetchJson, API_BASE } from "@/lib/api";
+import { DASHBOARD_CACHE_KEY, fetchCachedJson, readCachedJson, API_BASE } from "@/lib/api";
+import { SyncButton } from "@/components/layout/LastSync";
 import { buildJourneyRoute, getJourneyDisplayLegs, getPrimaryJourneyDestination, isJourneyDestination, money, normalizeState, stateLabel, firstPlateNumber } from "@/lib/formatters";
 import type { Trip, GpsPayload } from "@/types/trip";
 
@@ -75,8 +76,8 @@ function paymentItemName(item?: string, description?: string) {
 
 function DetailContent() {
   const { theme, toggle } = useTheme();
-  const params = useSearchParams();
-  const tripId = params.get("journey_id") || params.get("trip_id");
+  const router = useRouter();
+  const [tripId, setTripId] = useState<string | null>(null);
   const [trip, setTrip] = useState<Trip | null>(null);
   const [gps, setGps] = useState<GpsPayload | null>(null);
   const [error, setError] = useState("");
@@ -84,32 +85,48 @@ function DetailContent() {
   const [expandedLegKey, setExpandedLegKey] = useState<string>("");
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const nextId = params.get("journey_id") || params.get("trip_id");
+    setTripId(nextId);
+  }, []);
+
+  useEffect(() => {
     if (!tripId) { 
       return; 
     }
     (async () => {
-      const mode = localStorage.getItem("fleetDashboardMode") || "live";
-      let found: Trip | null = null;
+      const saved = readCachedJson<{ recent_journeys?: Trip[] }>(DASHBOARD_CACHE_KEY);
+      let found = (saved?.recent_journeys || []).find((t) => String(t.id) === String(tripId)) || null;
+      if (found) setTrip(found);
       try {
-        found = await fetchJson<Trip>(`${API_BASE}/journeys/${encodeURIComponent(tripId)}`);
+        found = await fetchCachedJson<Trip>(`${API_BASE}/journeys/${encodeURIComponent(tripId)}`, undefined, {
+          ttlMs: 60_000,
+          cacheKey: `journey:${tripId}`,
+        }) || found;
       } catch {}
       if (!found) {
         try {
-          const data = await fetchJson<{ recent_journeys?: Trip[] }>(
-            `${API_BASE}/dashboard/full?mode=${encodeURIComponent(mode)}`
+          const data = await fetchCachedJson<{ recent_journeys?: Trip[] }>(
+            `${API_BASE}/dashboard/full?mode=live`,
+            undefined,
+            { ttlMs: 60_000, cacheKey: DASHBOARD_CACHE_KEY }
           );
           found = (data.recent_journeys || []).find((t) => String(t.id) === String(tripId)) || null;
         } catch {}
       }
       if (!found) { setError("Trip not found in the selected data source."); return; }
       setTrip(found);
+      setError("");
       // GPS
       if (found.mayet_status || found.mayet_captured_at) {
         setGps({ gps: { location: found.mayet_status, captured_at: found.mayet_captured_at, latitude: found.mayet_latitude, longitude: found.mayet_longitude } });
       } else {
         try {
-          const g = await fetchJson<GpsPayload>(
-            `${API_BASE}/dashboard/gps/${encodeURIComponent(found.vehicle_plate || found.vehicle_id || String(found.id))}`
+          const plate = found.vehicle_plate || found.vehicle_id || String(found.id);
+          const g = await fetchCachedJson<GpsPayload>(
+            `${API_BASE}/dashboard/gps/${encodeURIComponent(plate)}`,
+            undefined,
+            { ttlMs: 60_000, cacheKey: `dashboard:gps:${plate}` }
           );
           setGps(g);
         } catch {}
@@ -130,7 +147,7 @@ function DetailContent() {
   }
 
   if (!trip) {
-    return <div className="empty" style={{ padding: 60 }}>Loading…</div>;
+    return null;
   }
 
   const state = normalizeState(trip.status || trip.state);
@@ -157,17 +174,18 @@ function DetailContent() {
   const legs = getJourneyDisplayLegs(trip);
   const mapLink = `/map?journey_id=${encodeURIComponent(trip.id)}&vehicle=${encodeURIComponent(trip.vehicle_plate || trip.vehicle_id || String(trip.id))}`;
   const nav = (view: SidebarView) => {
-    if (view === "overview") window.location.href = "/";
-    else if (view === "finance") window.location.href = "/finance";
-    else if (view === "reports") window.location.href = "/reports";
-    else if (view === "payments") window.location.href = "/payments";
-    else if (view === "map") window.location.href = "/map";
-    else window.location.href = `/?view=${view}`;
+    if (view === "overview") router.push("/");
+    else if (view === "finance") router.push("/finance");
+    else if (view === "reports") router.push("/reports");
+    else if (view === "payments") router.push("/payments");
+    else if (view === "map") router.push("/map");
+    else router.push(`/?view=${view}`);
   };
 
   const metrics: [string, string | number, string][] = [
     ["Driver", trip.driver_name || "Unassigned", ""],
     ["Journey Revenue", money(revenue), "green"],
+    ["Unconfirmed Receivable", money(trip.unconfirmed_revenue || 0), Number(trip.unconfirmed_revenue || 0) > 0 ? "amber" : ""],
     ["Paid", money(trip.paid_amount), "green"],
     ["Pending", money(trip.pending_payment), "amber"],
     ["Journey Expense", money(expense), "red"],
@@ -194,6 +212,7 @@ function DetailContent() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <SyncButton />
           <Link className="btn" href="/">
             <LayoutDashboard size={16} /> Dashboard
           </Link>
@@ -394,9 +413,5 @@ function DetailContent() {
 }
 
 export default function DetailPage() {
-  return (
-    <Suspense fallback={<div className="p-8 text-center">Loading trip details...</div>}>
-      <DetailContent />
-    </Suspense>
-  );
+  return <DetailContent />;
 }

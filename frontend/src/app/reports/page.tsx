@@ -2,7 +2,7 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from "recharts";
 import * as ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
-import { Fragment, useEffect, useState, useCallback, useMemo } from "react";
+import { Fragment, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LayoutDashboard, Moon, Sun, Plus, RefreshCw, Menu, ChevronDown, ChevronRight, Pencil } from "lucide-react";
@@ -10,10 +10,14 @@ import { useTheme } from "@/hooks/useTheme";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import BackButton from "@/components/navigation/BackButton";
 import GpsLocationList, { type GpsPlace } from "@/components/reports/GpsLocationList";
+import LocationCompare from "@/components/reports/LocationCompare";
 import LocationDaysDetail from "@/components/reports/LocationDaysDetail";
-import { fetchCachedJson, fetchJson, readCachedJson, API_BASE } from "@/lib/api";
+import WeeklyReport from "@/components/reports/WeeklyReport";
+import YearlyReport from "@/components/reports/YearlyReport";
+import { fetchCachedJson, fetchJson, readCachedJson, sessionIsActive, API_BASE } from "@/lib/api";
+import LastSyncLabel, { SyncButton } from "@/components/layout/LastSync";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { cleanTripReference, money, normalizeState, stateLabel } from "@/lib/formatters";
+import { cleanTripReference, money, normalizeState, paymentRequestItemLines, repeatedGroupSpan, stateLabel } from "@/lib/formatters";
 import type {
   LocationRow,
   LocationSummary,
@@ -30,12 +34,40 @@ type Tab =
   | "payment-requests"
   | "finance-summary"
   | "daily-profit"
+  | "weekly-report"
+  | "yearly-report"
   | "whatsapp-reports"
   | "new-request";
 
-type LocationView = "summary" | "gps";
+type LocationView = "summary" | "gps" | "compare";
 
 type PaymentSubtab = "all" | "daily-supervisor" | "pscn";
+
+const HIDDEN_SHEET_PHRASES = [
+  "Border entry fees into Dire Dawa (Unloaded)",
+  "Border entry fees into Djibouti",
+  "Charges paid at weigh stations to verify truck weight",
+  "Fee for vehicle security service",
+  "Fixed daily allowance for basic employee travel expenses",
+  "Labor costs for cargo loading assistants at the Djibouti port",
+  "Reimbursed costs for employee mobile phone airtime and data",
+  "Toll payments for using high-speed highways",
+  "Total fuel costs allocated for a complete two-way journey",
+];
+
+function sheetDisplayText(value?: string | null) {
+  let text = String(value || "");
+  for (const phrase of HIDDEN_SHEET_PHRASES) {
+    text = text.split(phrase).join("");
+  }
+  return text
+    .replace(/\bPYR-01146\b/g, "")
+    .replace(/(?:\s*·\s*){2,}/g, " · ")
+    .replace(/^(?:\s*·\s*)+|(?:\s*·\s*)+$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\.\s*\./g, ".")
+    .trim();
+}
 
 interface WhatsappSummary {
   payment_requests_text: string;
@@ -79,10 +111,12 @@ interface PscnRow {
 const TABS: { id: Tab; label: string }[] = [
   { id: "location-summary", label: "Current location" },
   { id: "daily-profit", label: "Daily Profit" },
+  { id: "weekly-report", label: "Weekly Report" },
+  { id: "yearly-report", label: "Yearly report" },
   { id: "whatsapp-reports", label: "WhatsApp Reports" },
 ];
 
-const todayIsoDate = () => new Date().toISOString().slice(0, 10);
+const todayIsoDate = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Addis_Ababa", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const PAYMENT_REQUESTS_CACHE_KEY = "reports:payment-requests:odoo-db-v5";
 
 export default function ReportsPage() {
@@ -280,10 +314,8 @@ export default function ReportsPage() {
     return paymentRequests
       .filter((pr) => {
         if (!q) return true;
-        return Object.values(pr as unknown as Record<string, unknown>)
-          .join(" ")
-          .toLowerCase()
-          .includes(q);
+        const lines = requestLines(pr).map((line) => `${line.item || ""} ${line.description || ""}`).join(" ");
+        return `${Object.values(pr as unknown as Record<string, unknown>).join(" ")} ${lines}`.toLowerCase().includes(q);
       })
       .filter((pr) => (
         paymentFilterState === "all" ||
@@ -295,17 +327,27 @@ export default function ReportsPage() {
       });
   }, [filterText, paymentFilterDate, paymentFilterState, paymentRequests]);
 
+  const approvedPaymentRequest = (pr: PaymentRequest) => {
+    const state = String(pr.state || "").toLowerCase();
+    if (state === "cancelled" || state === "canceled") return false;
+    return Boolean(pr.approved_on) || ["approved", "paid", "posted", "done"].includes(state);
+  };
+
   const paymentRequestStats = useMemo(() => {
-    const total = filteredPaymentRequests.reduce((sum, pr) => sum + Number(pr.total_amount || 0), 0);
+    const rows = paymentSubtab === "daily-supervisor"
+      ? filteredPaymentRequests.filter(approvedPaymentRequest)
+      : filteredPaymentRequests;
+    const total = rows.reduce((sum, pr) => sum + Number(pr.total_amount || 0), 0);
     return {
-      count: filteredPaymentRequests.length,
+      count: rows.length,
       total,
       date: paymentFilterDate || todayIsoDate(),
     };
-  }, [filteredPaymentRequests, paymentFilterDate]);
+  }, [filteredPaymentRequests, paymentFilterDate, paymentSubtab]);
 
   const dailySupervisorRows = useMemo<DailySupervisorRow[]>(() => {
     return filteredPaymentRequests
+      .filter(approvedPaymentRequest)
       .flatMap((pr) => requestLines(pr).map((line) => ({
         date: (pr.date || pr.approved_on || new Date().toISOString()).slice(0, 10),
         supervisor: pr.supervisor_name || pr.requester_name || "Unassigned",
@@ -314,7 +356,7 @@ export default function ReportsPage() {
         requestId: pr.id,
         state: pr.state || "draft",
         requester: pr.requester_name || "",
-        item: line.item || "",
+        item: paymentItemName(line.item, line.description),
         description: line.description || "",
         quantity: line.quantity || 1,
         amount: line.amount || 0,
@@ -324,7 +366,9 @@ export default function ReportsPage() {
       .sort((a, b) =>
         b.date.localeCompare(a.date) ||
         a.supervisor.localeCompare(b.supervisor) ||
-        a.vehicle.localeCompare(b.vehicle)
+        a.vehicle.localeCompare(b.vehicle) ||
+        a.route.localeCompare(b.route) ||
+        String(a.requestId).localeCompare(String(b.requestId))
       );
   }, [filteredPaymentRequests, paymentRouteName]);
 
@@ -405,11 +449,11 @@ export default function ReportsPage() {
         row.supervisor,
         row.vehicle,
         row.route,
-        row.item || row.description || "",
+        paymentRequestItemLines(row.item, row.description).join("\n"),
         row.quantity,
         row.amount,
         row.lineTotal,
-        `${row.state || "draft"} / Request ${row.requestId}`,
+        "",
       ]);
       dataRow.eachCell((cell, colNumber) => {
         cell.font = { name: "Times New Roman", size: 11 };
@@ -417,13 +461,30 @@ export default function ReportsPage() {
         if ([7, 8].includes(colNumber)) {
           cell.alignment = { horizontal: "right", vertical: "middle" };
           cell.numFmt = "#,##0.00";
-        } else if ([1, 3, 6].includes(colNumber)) {
-          cell.alignment = { horizontal: "center", vertical: "middle" };
+        } else if ([1, 2, 3, 4, 6].includes(colNumber)) {
+          cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
         } else {
           cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
         }
       });
     });
+
+    const mergeRepeated = (column: number, keyOf: (row: DailySupervisorRow) => string) => {
+      let start = 0;
+      while (start < dailySupervisorRows.length) {
+        const key = keyOf(dailySupervisorRows[start]);
+        let end = start + 1;
+        while (end < dailySupervisorRows.length && keyOf(dailySupervisorRows[end]) === key) end += 1;
+        if (end > start + 1) {
+          sheet.mergeCells(4 + start, column, 3 + end, column);
+          sheet.getCell(4 + start, column).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+        }
+        start = end;
+      }
+    };
+    mergeRepeated(2, (row) => row.supervisor || "Unassigned");
+    mergeRepeated(3, (row) => `${row.supervisor}|${row.vehicle}`);
+    mergeRepeated(4, (row) => `${row.supervisor}|${row.vehicle}|${row.route}`);
 
     const totalRow = sheet.addRow(["", "", "", "", "", "", "", "Total", dailySupervisorTotal]);
     sheet.mergeCells(`A${totalRow.number}:G${totalRow.number}`);
@@ -463,7 +524,7 @@ export default function ReportsPage() {
     const sheet = workbook.addWorksheet('Daily Profit');
 
     // Add Title
-    sheet.mergeCells('A1:G1');
+    sheet.mergeCells('A1:H1');
     const titleCell = sheet.getCell('A1');
     titleCell.value = 'Daily Cost and Profit Report';
     titleCell.font = { name: 'Times New Roman', size: 14, italic: true, bold: true };
@@ -477,7 +538,7 @@ export default function ReportsPage() {
     dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
     // Header Row
-    const headers = ["No", "Driver name", "Plate number", "Route", "Revenue", "Cost", "Result"];
+    const headers = ["No", "Driver name", "Plate number", "Route", "Total Daily Revenue", "Cost", "Actual Daily Revenue", "Remark"];
     const headerRow = sheet.addRow(headers);
     headerRow.eachCell((cell) => {
       cell.font = { name: 'Times New Roman', size: 11, italic: true, bold: true };
@@ -493,15 +554,16 @@ export default function ReportsPage() {
         r.driver_name,
         r.plate_number,
         r.remarks || '',
-        r.receivable_posted ? r.actual_daily_total_revenue : '',
+        r.actual_daily_total_revenue || '',
         r.daily_total_cost || '',
-        r.receivable_posted ? r.actual_net_profit : 'Receivable not posted',
+        '',
+        r.revenue_description || '',
       ]);
       row.eachCell((cell, colNumber) => {
         cell.font = { name: 'Times New Roman', size: 11 };
         cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
         
-        if (colNumber >= 5 && colNumber <= 7 && r.receivable_posted) {
+        if (colNumber >= 5 && colNumber <= 6 && r.receivable_posted) {
           cell.alignment = { horizontal: 'right', vertical: 'middle' };
           cell.numFmt = '#,##0.00';
         } else if (colNumber === 1 || colNumber === 3) {
@@ -515,11 +577,12 @@ export default function ReportsPage() {
     // Totals Row
     const totalProfit = dailyProfit.totals.net_profit_total;
     const pendingCost = dailyProfit.totals.pending_cost_total || 0;
-    const totalsRow = sheet.addRow(['', '', '', '', '', '', '']);
-    sheet.mergeCells(`A${totalsRow.number}:G${totalsRow.number}`);
+    const totalsRow = sheet.addRow(['', '', '', '', '', '', '', '']);
+    sheet.mergeCells(`A${totalsRow.number}:H${totalsRow.number}`);
 
     const actualProfitCell = sheet.getCell(`A${totalsRow.number}`);
-    actualProfitCell.value = `Posted profit  ${totalProfit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}${pendingCost ? `   |   Waiting for receivable  ${pendingCost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : ''}`;
+    const formattedProfit = totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    actualProfitCell.value = `Profit  ${formattedProfit}`;
     const totalProfitCell = actualProfitCell;
 
     [actualProfitCell, totalProfitCell].forEach(cell => {
@@ -534,11 +597,10 @@ export default function ReportsPage() {
       { width: 5 },  // No
       { width: 20 }, // Driver
       { width: 15 }, // Plate
-      { width: 15 }, // Rent
-      { width: 15 }, // Daily cost
-      { width: 18 }, // Revenue
-      { width: 15 }, // Actual Net
-      { width: 18 }, // Daily Net
+      { width: 18 }, // Route
+      { width: 22 }, // Total Daily Revenue
+      { width: 15 }, // Cost
+      { width: 22 }, // Actual Daily Revenue
       { width: 30 }, // Remark
     ];
 
@@ -547,6 +609,7 @@ export default function ReportsPage() {
   }, [dailyProfit]);
 
   const load = useCallback(async (t: Tab = tab, force = false, silent = false) => {
+    if (t === "weekly-report" || t === "yearly-report") return;
     // Avoid re-fetching if data is already present and not forced
     const hasData = (() => {
       if (t === "location-summary") return !!locationSummary;
@@ -568,17 +631,17 @@ export default function ReportsPage() {
     };
 
     if (t === "location-summary") {
-      showCached<LocationSummary>("reports:current-location-summary-supervised-v3", setLocationSummary);
+      showCached<LocationSummary>("reports:current-location-summary-supervised-v5", setLocationSummary);
     } else if (t === "payment-requests") {
       showCached<PaymentRequest[]>(PAYMENT_REQUESTS_CACHE_KEY, setPaymentRequests);
     } else if (t === "finance-summary") {
-      showCached<FinanceSummary>(`reports:finance-summary-v4:${financePeriod}:${financeGroupBy}`, setFinanceSummary);
+      showCached<FinanceSummary>(`reports:finance-summary-v7:${financePeriod}:${financeGroupBy}`, setFinanceSummary);
     } else if (t === "daily-profit") {
-      showCached<DailyProfit>(`reports:daily-profit-v4:${dailyDate || "latest"}`, setDailyProfit);
+      showCached<DailyProfit>(`reports:daily-profit-v11:${dailyDate || "latest"}`, setDailyProfit);
     } else if (t === "whatsapp-reports") {
       showCached<PaymentRequest[]>(PAYMENT_REQUESTS_CACHE_KEY, setPaymentRequests);
       showCached<WhatsappSummary>(
-        `reports:whatsapp-summary:${whatsappFormat}:${selectedPrIds.join("-") || "none"}`,
+        `reports:whatsapp-summary:v4:${whatsappFormat}:${selectedPrIds.join("-") || "none"}`,
         setWhatsappSummary
       );
     }
@@ -586,28 +649,28 @@ export default function ReportsPage() {
     if (!silent) setLoading(!showedCachedData);
     try {
       if (t === "location-summary") {
-        const data = await fetchCachedJson<LocationSummary>(`${API_BASE}/reports/current-location-summary`, undefined, { ttlMs: 600_000, cacheKey: "reports:current-location-summary-supervised-v3", forceRefresh: force });
+        const data = await fetchCachedJson<LocationSummary>(`${API_BASE}/reports/current-location-summary`, undefined, { ttlMs: 1_000, cacheKey: "reports:current-location-summary-supervised-v5", forceRefresh: force });
         setLocationSummary(data);
       } else if (t === "payment-requests") {
-        const rows = await fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, { ttlMs: 600_000, cacheKey: PAYMENT_REQUESTS_CACHE_KEY, forceRefresh: force });
+        const rows = await fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, { ttlMs: 60_000, cacheKey: PAYMENT_REQUESTS_CACHE_KEY, forceRefresh: force });
         setPaymentRequests(rows);
       } else if (t === "finance-summary") {
         const data = await fetchCachedJson<FinanceSummary>(
           `${API_BASE}/reports/finance-summary?period=${financePeriod}&group_by=${financeGroupBy}`,
           undefined,
-          { ttlMs: 600_000, cacheKey: `reports:finance-summary-v4:${financePeriod}:${financeGroupBy}`, forceRefresh: force }
+          { ttlMs: 60_000, cacheKey: `reports:finance-summary-v7:${financePeriod}:${financeGroupBy}`, forceRefresh: force }
         );
         setFinanceSummary(data);
       } else if (t === "daily-profit") {
         const url = dailyDate
           ? `${API_BASE}/reports/daily-profit?report_date=${dailyDate}`
           : `${API_BASE}/reports/daily-profit`;
-        const data = await fetchCachedJson<DailyProfit>(url, undefined, { ttlMs: 600_000, cacheKey: `reports:daily-profit-v4:${dailyDate || "latest"}`, forceRefresh: force });
+        const data = await fetchCachedJson<DailyProfit>(url, undefined, { ttlMs: 60_000, cacheKey: `reports:daily-profit-v11:${dailyDate || "latest"}`, forceRefresh: force });
         setDailyProfit(data);
       } else if (t === "whatsapp-reports") {
         let prs = paymentRequests;
-        if (!prs.length || force) {
-            prs = await fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, { ttlMs: 600_000, cacheKey: PAYMENT_REQUESTS_CACHE_KEY, forceRefresh: force });
+        if (!prs.length) {
+            prs = await fetchCachedJson<PaymentRequest[]>(`${API_BASE}/reports/payment-requests`, undefined, { ttlMs: 60_000, cacheKey: PAYMENT_REQUESTS_CACHE_KEY, forceRefresh: force });
             setPaymentRequests(prs);
         }
         
@@ -626,11 +689,11 @@ export default function ReportsPage() {
 
         const url = `${API_BASE}/reports/whatsapp-summary?format=${whatsappFormat}` + 
                     (idsToFetch.length > 0 ? `&pr_ids=${idsToFetch.join(",")}` : "&pr_ids=none");
-        const data = await fetchCachedJson<WhatsappSummary>(url, undefined, { ttlMs: 600_000, cacheKey: `reports:whatsapp-summary:${whatsappFormat}:${idsToFetch.join("-") || "none"}`, forceRefresh: force });
+        const data = await fetchCachedJson<WhatsappSummary>(url, undefined, { ttlMs: 1_000, cacheKey: `reports:whatsapp-summary:v4:${whatsappFormat}:${idsToFetch.join("-") || "none"}`, forceRefresh: force });
         setWhatsappSummary(data);
         // Also preload daily profit for the spreadsheet button
         if (!dailyProfit) {
-            const dp = await fetchCachedJson<DailyProfit>(`${API_BASE}/reports/daily-profit`, undefined, { ttlMs: 600_000, cacheKey: "reports:daily-profit-v4:latest" });
+            const dp = await fetchCachedJson<DailyProfit>(`${API_BASE}/reports/daily-profit`, undefined, { ttlMs: 60_000, cacheKey: "reports:daily-profit-v11:latest" });
             setDailyProfit(dp);
         }
       }
@@ -654,7 +717,7 @@ export default function ReportsPage() {
 
   useEffect(() => {
     // Auth guard
-    fetchJson(`${API_BASE}/auth/me`).catch(() => router.push("/login"));
+    void sessionIsActive().then((active) => { if (!active) router.push("/login"); });
   }, [router]);
 
   useEffect(() => {
@@ -663,6 +726,29 @@ export default function ReportsPage() {
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [tab]);
+
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+
+  useEffect(() => {
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey?: string; data?: unknown }>).detail;
+      if (!detail?.cacheKey || detail.data === undefined) return;
+      const key = detail.cacheKey;
+      if (key === "reports:current-location-summary-supervised-v5") setLocationSummary(detail.data as LocationSummary);
+      else if (key === PAYMENT_REQUESTS_CACHE_KEY) setPaymentRequests(detail.data as PaymentRequest[]);
+      else if (key === `reports:finance-summary-v7:${financePeriod}:${financeGroupBy}`) setFinanceSummary(detail.data as FinanceSummary);
+      else if (key === `reports:daily-profit-v11:${dailyDate || "latest"}`) setDailyProfit(detail.data as DailyProfit);
+      else if (key === "dashboard:mayet:vehicles") {
+        const catalog = detail.data as { vehicles?: MayetVehicle[] };
+        setGpsVehicles(Array.isArray(catalog.vehicles) ? catalog.vehicles : []);
+      }
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
+    return () => window.removeEventListener("fleet-cache-updated", onUpdate);
+  }, [dailyDate, financeGroupBy, financePeriod]);
 
   useEffect(() => {
     if (tab !== "finance-summary") return;
@@ -710,30 +796,45 @@ export default function ReportsPage() {
   }, [tab, paymentRequests, selectedPrIds.length]);
 
   useEffect(() => {
-    if (tab !== "location-summary" || locationView !== "gps") return;
+    if (tab !== "location-summary" || locationView === "summary") return;
     let cancelled = false;
-    fetchCachedJson<{ vehicles?: MayetVehicle[]; message?: string }>(
-      `${API_BASE}/dashboard/mayet/vehicles`,
-      undefined,
-      { ttlMs: 30_000, cacheKey: "dashboard:mayet:vehicles", forceRefresh: true }
-    )
-      .then((catalog) => {
-        if (cancelled) return;
-        setGpsVehicles(Array.isArray(catalog.vehicles) ? catalog.vehicles : []);
-        setGpsError(catalog.vehicles?.length ? "" : (catalog.message || ""));
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setGpsError(error instanceof Error ? error.message : "Could not load GPS locations");
-      });
-    return () => { cancelled = true; };
+    const pullGps = () => {
+      fetchCachedJson<{ vehicles?: MayetVehicle[]; message?: string }>(
+        `${API_BASE}/dashboard/mayet/vehicles`,
+        undefined,
+        { ttlMs: 60_000, cacheKey: "dashboard:mayet:vehicles" }
+      )
+        .then((catalog) => {
+          if (cancelled) return;
+          setGpsVehicles(Array.isArray(catalog.vehicles) ? catalog.vehicles : []);
+          setGpsError(catalog.vehicles?.length ? "" : (catalog.message || ""));
+        })
+        .catch((error: unknown) => {
+          const saved = readCachedJson<{ vehicles?: MayetVehicle[] }>("dashboard:mayet:vehicles");
+          if (!cancelled && saved?.vehicles?.length) {
+            setGpsVehicles(saved.vehicles);
+            setGpsError("");
+            return;
+          }
+          if (!cancelled) setGpsError(error instanceof Error ? error.message : "Could not load GPS locations");
+        });
+    };
+    pullGps();
+    const timer = window.setInterval(pullGps, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [tab, locationView]);
 
   useEffect(() => {
-    if (tab !== "location-summary" || locationView !== "gps") return;
+    if (tab !== "location-summary" || locationView === "summary") return;
     let cancelled = false;
     let timer = 0;
     const loadPlaces = () => {
-      fetchJson<{ places?: GpsPlace[]; pending?: number }>(`${API_BASE}/dashboard/gps-places`)
+      const savedPlaces = readCachedJson<{ places?: GpsPlace[]; pending?: number }>("dashboard:gps-places");
+      if (savedPlaces) setGpsPlaces(Array.isArray(savedPlaces.places) ? savedPlaces.places : []);
+      fetchCachedJson<{ places?: GpsPlace[]; pending?: number }>(`${API_BASE}/dashboard/gps-places`, undefined, { ttlMs: 60_000, cacheKey: "dashboard:gps-places" })
         .then((data) => {
           if (cancelled) return;
           const pending = data.pending || 0;
@@ -854,6 +955,24 @@ export default function ReportsPage() {
     });
   }, [locationSummary]);
 
+  const isPendingPlace = (value?: string | null) => /^\*\s*pending/i.test(String(value || "").trim());
+  const placeName = (value?: string | null) => {
+    const name = String(value || "").trim();
+    return name && !isPendingPlace(name) ? name : "";
+  };
+  const openTripLabel = (row: LocationRow) => {
+    const trip = String(row.reference || "").trim();
+    const from = placeName(row.departure_name);
+    const to = placeName(row.destination_name);
+    const route = from && to ? `${from} → ${to}` : to || from;
+    return [trip, route].filter(Boolean).join(" · ");
+  };
+  const locationEvidence = (row: LocationRow) => {
+    const note = String(row.current_location_note || "").trim();
+    if (note && !isPendingPlace(note)) return note;
+    return openTripLabel(row);
+  };
+
   const compactGpsNote = (value?: string | null) => {
     const note = String(value || "").trim();
     if (!note) return <span className="muted">–</span>;
@@ -892,7 +1011,7 @@ export default function ReportsPage() {
     totalCell.font = { name: "Times New Roman", size: 11, italic: true, bold: true };
     totalCell.alignment = { horizontal: "center", vertical: "middle" };
 
-    const headers = ["No", "Location", "Vehicle", "Supervisor", "Driver", "Destination", "DB Note", "State", "Days"];
+    const headers = ["No", "Location", "Vehicle", "Supervisor", "Driver", "Open trip", "Evidence", "State", "Days"];
     const headerRow = sheet.addRow(headers);
     headerRow.eachCell((cell) => {
       cell.font = { name: "Times New Roman", size: 11, italic: true, bold: true };
@@ -927,8 +1046,8 @@ export default function ReportsPage() {
           vehicle.vehicle_plate || "N/A",
           vehicle.supervisor_name || "Unassigned",
           vehicle.driver_name || "Unassigned",
-          vehicle.destination_name || "",
-          vehicle.current_location_note || "",
+          openTripLabel(vehicle),
+          locationEvidence(vehicle),
           stateLabel(vehicle.state),
           vehicle.current_location_days ?? vehicle.days ?? 0,
         ]);
@@ -965,12 +1084,7 @@ export default function ReportsPage() {
       <Sidebar 
         currentView={"reports" as SidebarView}
         onViewChange={(v) => {
-          if (v === "overview") { window.location.href = "/"; }
-          else if (v === "reports") { window.location.href = "/reports"; }
-          else if (v === "finance") { window.location.href = "/finance"; }
-          else if (v === "payments") { window.location.href = "/payments"; }
-          else if (v === "map") { window.location.href = "/map"; }
-          else { window.location.href = `/?view=${v}`; }
+          router.push(v === "overview" ? "/" : v === "reports" ? "/reports" : v === "finance" ? "/finance" : v === "payments" ? "/payments" : v === "map" ? "/map" : `/?view=${v}`);
         }} 
         mobileOpen={mobileSidebarOpen} 
         onCloseMobile={() => setMobileSidebarOpen(false)}
@@ -991,6 +1105,7 @@ export default function ReportsPage() {
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <BackButton />
+          <SyncButton />
           <button className="btn" onClick={() => load(tab, true)}><RefreshCw size={16} /> Refresh</button>
           <button className="btn" id="theme-toggle" onClick={toggle}>
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
@@ -1013,15 +1128,16 @@ export default function ReportsPage() {
       </div>
 
       {/* Filter bar (shared) */}
-      {tab !== "payment-requests" && tab !== "new-request" && tab !== "whatsapp-reports" && (
+      {tab !== "payment-requests" && tab !== "new-request" && tab !== "whatsapp-reports" && tab !== "weekly-report" && tab !== "yearly-report" && (
         <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--line)", background: "var(--panel)", display: "flex", gap: 10, alignItems: "center" }}>
           <input
             className="fleet-input"
-            placeholder={locationView === "gps" && tab === "location-summary" ? "Search plate, driver, place, destination…" : "Filter rows…"}
+            placeholder={tab === "location-summary" && locationView !== "summary" ? "Search plate, driver, place, destination…" : "Filter rows…"}
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
             style={{ maxWidth: 320, minHeight: 36 }}
           />
+          {filterText.trim() && <LastSyncLabel searching />}
           {tab === "location-summary" && locationView === "summary" && (
             <select
               className="fleet-input"
@@ -1064,7 +1180,7 @@ export default function ReportsPage() {
               Export XLSX
             </button>
           )}
-          {loading && <span className="muted" style={{ fontSize: 13 }}>Loading…</span>}
+
         </div>
       )}
 
@@ -1077,8 +1193,17 @@ export default function ReportsPage() {
             <div className="report-tabs" style={{ padding: 0 }}>
               <button type="button" className={`report-tab${locationView === "summary" ? " active" : ""}`} onClick={() => setLocationView("summary")}>By location</button>
               <button type="button" className={`report-tab${locationView === "gps" ? " active" : ""}`} onClick={() => setLocationView("gps")}>GPS current location list</button>
+              <button type="button" className={`report-tab${locationView === "compare" ? " active" : ""}`} onClick={() => setLocationView("compare")}>Compare</button>
             </div>
-            {locationView === "gps" ? (
+            {locationView === "compare" ? (
+              <LocationCompare
+                trips={locationSummary.locations.flatMap((group) => group.vehicles.map((vehicle) => ({ ...vehicle, current_location_name: vehicle.current_location_name || group.location_name })))}
+                gpsVehicles={gpsVehicles}
+                places={gpsPlaces}
+                query={filterText}
+                error={gpsError}
+              />
+            ) : locationView === "gps" ? (
               <GpsLocationList
                 trips={locationSummary.locations.flatMap((group) => group.vehicles)}
                 gpsVehicles={gpsVehicles}
@@ -1114,7 +1239,7 @@ export default function ReportsPage() {
                 <div style={{ overflowX: "auto" }}>
                   <table className="fleet-table" style={{ fontStyle: 'normal' }}>
                     <thead>
-                      <tr>{["", "Vehicle", "Supervisor", "Driver", "Destination", "DB Note", "Dep. Date", "State", "Days"].map((h) => <th key={h || "expand"}>{h}</th>)}</tr>
+                      <tr>{["", "Vehicle", "Supervisor", "Driver", "Open trip", "Evidence", "Dep. Date", "State", "Days"].map((h) => <th key={h || "expand"}>{h}</th>)}</tr>
                     </thead>
                     <tbody>
                       {loc.vehicles.map((v, i) => {
@@ -1127,8 +1252,16 @@ export default function ReportsPage() {
                               <td>{v.vehicle_plate || "N/A"}</td>
                               <td>{v.supervisor_name || "Unassigned"}</td>
                               <td>{v.driver_name || "Unassigned"}</td>
-                              <td>{v.destination_name || "–"}</td>
-                              <td className="gps-note-cell">{compactGpsNote(v.current_location_note)}</td>
+                              <td>
+                                {v.trip_id ? (
+                                  <Link href={`/detail?journey_id=${encodeURIComponent(String(v.trip_id))}`} onClick={(event) => event.stopPropagation()}>
+                                    {openTripLabel(v) || `Trip ${v.trip_id}`}
+                                  </Link>
+                                ) : (
+                                  openTripLabel(v) || "No open trip"
+                                )}
+                              </td>
+                              <td className="gps-note-cell">{locationEvidence(v) || "No location note"}</td>
                               <td className="location-date-cell">{v.departure_date || "–"}</td>
                               <td><span className={`pill ${normalizeState(v.state)}`}>{stateLabel(v.state)}</span></td>
                               <td>{v.current_location_days ?? v.days ?? 0}</td>
@@ -1136,6 +1269,10 @@ export default function ReportsPage() {
                             {rowOpen && (
                               <tr>
                                 <td colSpan={9} style={{ background: "var(--panel-2)", padding: 12 }}>
+                                  <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+                                    <strong>{openTripLabel(v) || "No open trip"}</strong>
+                                    <span>{locationEvidence(v) || "No descriptive location note on this trip."}</span>
+                                  </div>
                                   <LocationDaysDetail row={v} />
                                 </td>
                               </tr>
@@ -1429,19 +1566,24 @@ export default function ReportsPage() {
                     {dailySupervisorRows.length === 0 ? (
                       <tr><td colSpan={9} className="empty">No preview rows for this filter.</td></tr>
                     ) : (
-                      dailySupervisorRows.slice(0, 80).map((row, index) => (
+                      dailySupervisorRows.map((row, index, rows) => {
+                        const supervisorSpan = repeatedGroupSpan(rows, index, (item) => item.supervisor || "Unassigned");
+                        const plateSpan = repeatedGroupSpan(rows, index, (item) => `${item.supervisor}|${item.vehicle}`);
+                        const routeSpan = repeatedGroupSpan(rows, index, (item) => `${item.supervisor}|${item.vehicle}|${item.route}`);
+                        return (
                         <tr key={`${row.requestId}-${index}`}>
-                          <td>{index + 1}</td>
-                          <td>{row.supervisor || "Unassigned"}</td>
-                          <td>{row.vehicle || "–"}</td>
-                          <td>{row.route || "–"}</td>
-                          <td>{row.item || row.description || "–"}</td>
-                          <td>{row.quantity}</td>
-                          <td>{money(row.amount)}</td>
-                          <td className="green">{money(row.lineTotal)}</td>
-                          <td>{row.state || "draft"} / Request {String(row.requestId)}</td>
+                          <td className="daily-report-no">{index + 1}</td>
+                          {supervisorSpan > 0 && <td className="daily-report-span" rowSpan={supervisorSpan}>{row.supervisor || "Unassigned"}</td>}
+                          {plateSpan > 0 && <td className="daily-report-span" rowSpan={plateSpan}>{row.vehicle || "–"}</td>}
+                          {routeSpan > 0 && <td className="daily-report-span" rowSpan={routeSpan}>{row.route || "–"}</td>}
+                          <td>{paymentRequestItemLines(row.item, row.description).map((line, lineIndex) => <div key={lineIndex}>{line}</div>)}</td>
+                          <td className="daily-report-center">{row.quantity}</td>
+                          <td className="daily-report-money">{money(row.amount)}</td>
+                          <td className="daily-report-money green">{money(row.lineTotal)}</td>
+                          <td></td>
                         </tr>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                   {dailySupervisorRows.length > 0 && (
@@ -1455,11 +1597,7 @@ export default function ReportsPage() {
                   )}
                 </table>
               </div>
-              {dailySupervisorRows.length > 80 && (
-                <div className="muted" style={{ fontSize: 12, paddingTop: 8 }}>
-                  Showing first 80 preview rows. Daily Supervisor XLSX includes all {dailySupervisorRows.length} rows.
-                </div>
-              )}
+
             </div>
             )}
             {paymentSubtab === "pscn" && (
@@ -1533,19 +1671,24 @@ export default function ReportsPage() {
         )}
 
         {/* ── Daily Profit ── */}
+        {tab === "weekly-report" && (
+          <WeeklyReport />
+        )}
+
+        {tab === "yearly-report" && (
+          <YearlyReport />
+        )}
+
         {tab === "daily-profit" && dailyProfit && (
           <div style={{ display: "grid", gap: 16 }}>
             {dailyProfit._warning && <div className="login-error">{dailyProfit._warning}</div>}
-            <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-              Profit is customer receivable minus trip cost. Cost is counted once. Waiting means the receivable is not posted yet, so it is not a loss.
-            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px,1fr))", gap: 12 }}>
               <div className="card"><div className="card-label">Report Date</div><div className="card-value">{dailyProfit.report_date || "No financial date"}</div></div>
               <div className="card"><div className="card-label">Vehicles</div><div className="card-value">{dailyProfit.totals.vehicle_count}</div></div>
-              <div className="card"><div className="card-label">Posted Revenue</div><div className="card-value green">{money(dailyProfit.totals.revenue_total)}</div></div>
+              <div className="card"><div className="card-label">Revenue</div><div className="card-value green">{money(dailyProfit.totals.revenue_total)}</div></div>
+              <div className="card"><div className="card-label">Unconfirmed</div><div className="card-value">{money(dailyProfit.totals.unconfirmed_total || 0)}</div></div>
               <div className="card"><div className="card-label">Cost</div><div className="card-value">{money(dailyProfit.totals.cost_total)}</div></div>
               <div className="card"><div className="card-label">Posted Profit</div><div className={`card-value ${dailyProfit.totals.net_profit_total >= 0 ? "green" : "red"}`}>{money(dailyProfit.totals.net_profit_total)}</div></div>
-              <div className="card"><div className="card-label">Waiting Receivable</div><div className="card-value">{money(dailyProfit.totals.pending_cost_total || 0)}</div></div>
             </div>
             <div className="panel">
               <div className="panel-header"><div className="panel-title">Daily Vehicle Profit</div></div>
@@ -1556,8 +1699,8 @@ export default function ReportsPage() {
                 <table className="fleet-table" style={{ border: "1px solid var(--border)", borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
                   <thead>
                     <tr>
-                      {["No", "Driver", "Plate", "Route", "Revenue", "Cost", "Result"].map((h) => (
-                        <th key={h} style={{ border: "1px solid var(--border)", padding: "8px 12px", fontStyle: "italic", fontWeight: "normal", textAlign: "center", backgroundColor: "transparent" }}>{h}</th>
+                      {["No", "Driver", "Plate", "Route", "Total Daily Revenue", "Cost", "Actual Daily Revenue", "Remark"].map((h, index) => (
+                        <th key={`${h}-${index}`} style={{ border: "1px solid var(--border)", padding: "8px 12px", fontStyle: "italic", fontWeight: "normal", textAlign: index === 1 ? "left" : "center", backgroundColor: "transparent" }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -1565,7 +1708,7 @@ export default function ReportsPage() {
                     {(filterRows(dailyProfit.rows as unknown as Record<string, unknown>[]) as unknown as typeof dailyProfit.rows).length === 0 ? (
                       <tr>
                         <td
-                          colSpan={7}
+                          colSpan={8}
                           style={{
                             border: "1px solid var(--border)",
                             padding: "18px 12px",
@@ -1583,20 +1726,23 @@ export default function ReportsPage() {
                         <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}>{r.driver_name}</td>
                         <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}>{r.plate_number}</td>
                         <td style={{ border: "1px solid var(--border)", padding: "6px 12px", fontStyle: "italic" }}>{r.remarks}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.receivable_posted ? money(r.actual_daily_total_revenue) : "—"}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.daily_total_cost ? money(r.daily_total_cost) : "—"}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right", fontStyle: "italic" }} className={r.receivable_posted ? (r.actual_net_profit >= 0 ? "green" : "red") : ""}>
-                          {r.receivable_posted ? money(r.actual_net_profit) : "Waiting"}
+                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>
+                          {money(r.actual_daily_total_revenue || 0)}
+                          {(r.unconfirmed_amount || 0) > 0 && (
+                            <div className="muted" style={{ fontSize: 11 }}>Unconfirmed {money(r.unconfirmed_amount || 0)}</div>
+                          )}
                         </td>
+                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.daily_total_cost ? money(r.daily_total_cost) : "—"}</td>
+                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}></td>
+                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", fontStyle: "italic" }}>{r.revenue_description || ""}</td>
                       </tr>
                     ))}
                   </tbody>
                   {dailyProfit.rows.length > 0 && (
                     <tfoot>
                       <tr>
-                        <td colSpan={7} style={{ border: "1px solid var(--border)", padding: "8px 12px", backgroundColor: "#7fe57f", color: "#000", fontWeight: "bold", textAlign: "left", fontStyle: "italic" }}>
-                          Posted profit {money(dailyProfit.totals.net_profit_total)}
-                          {(dailyProfit.totals.pending_cost_total || 0) > 0 ? ` · Waiting for receivable ${money(dailyProfit.totals.pending_cost_total || 0)}` : ""}
+                        <td colSpan={8} style={{ border: "1px solid var(--border)", padding: "8px 12px", backgroundColor: "#7fe57f", color: "#000", fontWeight: "bold", textAlign: "left", fontStyle: "italic" }}>
+                          Profit {money(dailyProfit.totals.net_profit_total)}
                         </td>
                       </tr>
                     </tfoot>
