@@ -134,6 +134,25 @@ function DetailContent() {
     })();
   }, [tripId]);
 
+  useEffect(() => {
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey?: string; data?: unknown }>).detail;
+      if (!detail?.data || !tripId) return;
+      if (detail.cacheKey === `journey:${tripId}`) {
+        setTrip(detail.data as Trip);
+        setError("");
+      }
+      if (detail.cacheKey === DASHBOARD_CACHE_KEY) {
+        const updated = (detail.data as { recent_journeys?: Trip[] }).recent_journeys?.find((item) => String(item.id) === tripId);
+        if (updated) setTrip(updated);
+      }
+      const plate = trip?.vehicle_plate || trip?.vehicle_id || tripId;
+      if (detail.cacheKey === `dashboard:gps:${plate}`) setGps(detail.data as GpsPayload);
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
+    return () => window.removeEventListener("fleet-cache-updated", onUpdate);
+  }, [tripId, trip?.vehicle_plate, trip?.vehicle_id]);
+
   if (error) {
     return (
       <div style={{ padding: 40, textAlign: "center", color: "var(--muted)" }}>

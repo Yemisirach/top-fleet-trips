@@ -29,6 +29,15 @@ export default function CurrentLocationPage() {
       .catch(() => setData(scopeDashboard(cached || {}, user)));
   }, [user]);
 
+  useEffect(() => {
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey?: string; data?: DashboardSnapshot }>).detail;
+      if (detail?.cacheKey === DASHBOARD_CACHE_KEY && detail.data) setData(scopeDashboard(detail.data, user));
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
+    return () => window.removeEventListener("fleet-cache-updated", onUpdate);
+  }, [user]);
+
   const rows = useMemo(
     () => [...(data.vehicle_locations || [])].sort((a, b) => String(a.current_location_name || "").localeCompare(String(b.current_location_name || ""))),
     [data.vehicle_locations],

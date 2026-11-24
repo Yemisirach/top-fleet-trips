@@ -16,8 +16,8 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { yieldFleetSync } from "@/lib/api";
-import { clearFleetUser, storedFleetUser } from "@/lib/scope";
+import { yieldFleetSync, logoutFleetSession } from "@/lib/api";
+import { storedFleetUser } from "@/lib/scope";
 
 export type SidebarView =
   | "overview"
@@ -89,11 +89,7 @@ export default function Sidebar({ currentView, onViewChange, mobileOpen, onClose
   }, [router]);
 
   const handleLogout = useCallback(async () => {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "include",
-    });
-    clearFleetUser();
+    await logoutFleetSession();
     router.push("/login");
   }, [router]);
 
@@ -192,8 +188,7 @@ export default function Sidebar({ currentView, onViewChange, mobileOpen, onClose
 export function WindowLogout() {
   const router = useRouter();
   const logout = async () => {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-    clearFleetUser();
+    await logoutFleetSession();
     router.push("/login");
   };
   return (

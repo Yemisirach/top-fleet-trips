@@ -1,6 +1,18 @@
 from functools import lru_cache
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 from pydantic import BaseModel
+
+# Load .env from backend directory or project root
+_env_paths = [
+    Path.cwd() / ".env",
+    Path(__file__).resolve().parents[2] / ".env",
+    Path(__file__).resolve().parents[3] / ".env",
+]
+for _env_path in _env_paths:
+    if _env_path.exists():
+        load_dotenv(_env_path)
 
 
 def _env_bool(key: str, default: bool) -> bool:

@@ -23,26 +23,49 @@ export default function PwaRegister() {
       }
       document.querySelectorAll("body > .leaflet-container, body > .leaflet-pane").forEach((node) => node.remove());
     };
-    document.addEventListener("click", (event) => {
+    const onClick = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Element) || !target.closest(".nav-btn")) return;
       window.setTimeout(dropStackedShells, 350);
-    });
+    };
+    document.addEventListener("click", onClick);
     window.addEventListener("error", onError);
-    if (!("serviceWorker" in navigator)) return () => window.removeEventListener("error", onError);
-
-    window.addEventListener("load", () => {
-      navigator.serviceWorker
-        .register("/service-worker")
+    let stopped = false;
+    let timer: number | undefined;
+    const warmCurrentPage = () => {
+      if (stopped || !navigator.serviceWorker.controller || !navigator.onLine) return;
+      // The first document and its chunks loaded before the worker took control.
+      // Request them again so the first offline reload has a complete app shell.
+      void fetch(window.location.href, { headers: { "X-Fleet-Page": "1" } }).catch(() => undefined);
+      document.querySelectorAll<HTMLScriptElement | HTMLLinkElement>('script[src], link[rel="stylesheet"]').forEach((element) => {
+        const url = element instanceof HTMLScriptElement ? element.src : element.href;
+        if (new URL(url).origin === window.location.origin) void fetch(url).catch(() => undefined);
+      });
+    };
+    if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("controllerchange", warmCurrentPage);
+    const register = () => {
+      if (!("serviceWorker" in navigator)) return;
+      navigator.serviceWorker.register("/service-worker")
         .then((registration) => {
-          void registration.update();
-          window.setInterval(() => { void registration.update(); }, 60_000);
+          if (stopped) return;
+          warmCurrentPage();
+          void registration.update().catch(() => undefined);
+          timer = window.setInterval(() => {
+            if (navigator.onLine) void registration.update().catch(() => undefined);
+          }, 60_000);
         })
-        .catch((error) => {
-          console.warn("TOP Fleet service worker registration failed:", error);
-        });
-    });
-    return () => window.removeEventListener("error", onError);
+        .catch((error) => console.warn("TOP Fleet service worker registration failed:", error));
+    };
+    if (document.readyState === "complete") register();
+    else window.addEventListener("load", register, { once: true });
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      window.removeEventListener("load", register);
+      window.removeEventListener("error", onError);
+      document.removeEventListener("click", onClick);
+      if ("serviceWorker" in navigator) navigator.serviceWorker.removeEventListener("controllerchange", warmCurrentPage);
+    };
   }, []);
 
   return null;

@@ -1,4 +1,5 @@
-import { idbAll, idbPut } from "@/lib/fleet-db";
+import { fleetCacheScope, storedFleetUser, clearFleetUser, rememberFleetUser } from "@/lib/scope";
+import { idbAll, idbPut, idbClear } from "@/lib/fleet-db";
 
 export const API_BASE = "/api";
 export const DASHBOARD_CACHE_KEY = "dashboard:live:journey-routes-full-odoo-v11-own-receivable-only";
@@ -17,11 +18,18 @@ export async function fetchJson<T = unknown>(
 }
 
 export async function sessionIsActive(): Promise<boolean> {
+  if (getCacheStorage("local")?.getItem("fleet-logged-out") === "1") return false;
   try {
     const res = await fetch(`${API_BASE}/auth/me`, { credentials: "include" });
-    return res.status !== 401;
+    if (res.status === 401) { await resetFleetCache(); return false; }
+    if (res.ok) {
+      const payload = await res.json();
+      rememberFleetUser(payload.user);
+      return true;
+    }
+    return Boolean(storedFleetUser());
   } catch {
-    return true;
+    return Boolean(storedFleetUser());
   }
 }
 
@@ -61,7 +69,6 @@ const CORE_SYNCS: SyncTarget[] = [
   { url: "/api/reports/finance-summary?period=daily", cacheKey: "reports:finance-summary:daily", ttlMs: 60_000 },
   { url: "/api/dashboard/gps-places", cacheKey: "dashboard:gps-places", ttlMs: 60_000 },
 ];
-const PAGE_SHELLS = ["/", "/finance", "/reports", "/payments", "/map", "/planner", "/detail"];
 
 const getCacheStorage = (kind: "local" | "session" = "local") => {
   if (typeof window === "undefined") return null;
@@ -77,78 +84,27 @@ const storageKey = (cacheKey: string) =>
 
 export function markLastSync(at = new Date().toISOString()) {
   const storage = getCacheStorage("local");
-  storage?.setItem(LAST_SYNC_KEY, at);
+  try { storage?.setItem(fleetCacheScope() + LAST_SYNC_KEY, at); } catch { /* Storage may be full. */ }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("fleet-synced", { detail: at }));
   }
 }
 
 export async function pullServerSyncTime(): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE}/fleet/sync-status`, {
+      credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok && res.headers.get("X-Fleet-Cached") !== "1") {
+      const status = await res.json() as { synced_at?: string };
+      if (status.synced_at) markLastSync(status.synced_at);
+    }
+  } catch { /* Preserve the last confirmed Odoo sync time while offline. */ }
   return readLastSync();
 }
 
-export interface SharedCopy {
-  revision?: string;
-  report_date?: string | null;
-  totals?: {
-    revenue_total?: number;
-    cost_total?: number;
-    net_profit_total?: number;
-    vehicle_count?: number;
-  } | null;
-  dashboard?: unknown;
-}
-
-let lastSharedRevision = "";
-
-export function startSharedCopySync(): () => void {
-  if (typeof window === "undefined") return () => undefined;
-  let stopped = false;
-
-  const tick = async () => {
-    if (stopped || window.location.pathname === "/login") return;
-    try {
-      const res = await fetch(`${API_BASE}/fleet/shared-copy`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!res.ok) return;
-      const copy = await res.json() as SharedCopy;
-      window.dispatchEvent(new CustomEvent("fleet-shared-copy", { detail: copy }));
-      if (copy.totals && copy.report_date) {
-        const saved = { report_date: copy.report_date, totals: copy.totals, rows: [] };
-        writeCachedJson(`reports:daily-profit:${copy.report_date}`, saved, 60_000);
-        publishCache(`reports:daily-profit:${copy.report_date}`, saved);
-      }
-      const revision = copy.revision || "";
-      if (!revision || revision === lastSharedRevision) return;
-      const first = lastSharedRevision === "";
-      lastSharedRevision = revision;
-      if (first && !revision.replace(/\|/g, "")) return;
-      const full = await fetch(`${API_BASE}/fleet/shared-copy?include=dashboard`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!full.ok) return;
-      const body = await full.json() as SharedCopy;
-      if (!body.dashboard) return;
-      writeCachedJson(DASHBOARD_CACHE_KEY, body.dashboard, 6 * 60 * 60 * 1000);
-      publishCache(DASHBOARD_CACHE_KEY, body.dashboard);
-    } catch {
-      // Keep the numbers already on screen. Do not move the header time.
-    }
-  };
-
-  void tick();
-  const timer = window.setInterval(() => { void tick(); }, 1000);
-  return () => {
-    stopped = true;
-    window.clearInterval(timer);
-  };
-}
-
 export function readLastSync(): string | null {
-  return getCacheStorage("local")?.getItem(LAST_SYNC_KEY) || null;
+  return getCacheStorage("local")?.getItem(fleetCacheScope() + LAST_SYNC_KEY) || null;
 }
 
 export function fleetSavedNote(error?: unknown): string {
@@ -173,6 +129,9 @@ export function formatSyncTime(value?: string | null): string {
 }
 
 function writeCachedJson(cacheKey: string, data: unknown, ttlMs: number) {
+  const scope = fleetCacheScope();
+  if (!scope) return;
+  cacheKey = scope + cacheKey;
   memoryCache.set(cacheKey, data);
   void idbPut(cacheKey, data).catch(() => undefined);
   const storage = getCacheStorage("local");
@@ -190,7 +149,7 @@ function readSavedTargets(): SyncTarget[] {
   const storage = getCacheStorage("local");
   if (!storage) return [];
   try {
-    const parsed = JSON.parse(storage.getItem(REGISTRY_KEY) || "[]") as SyncTarget[];
+    const parsed = JSON.parse(storage.getItem(fleetCacheScope() + REGISTRY_KEY) || "[]") as SyncTarget[];
     return Array.isArray(parsed) ? parsed.filter((item) => item?.url && item.cacheKey) : [];
   } catch {
     return [];
@@ -204,7 +163,7 @@ function rememberSyncTarget(target: SyncTarget) {
   const saved = readSavedTargets().filter((item) => item.cacheKey !== target.cacheKey);
   saved.push(target);
   try {
-    storage.setItem(REGISTRY_KEY, JSON.stringify(saved.slice(-60)));
+    storage.setItem(fleetCacheScope() + REGISTRY_KEY, JSON.stringify(saved.slice(-60)));
   } catch {
     // The core sync list still runs if the registry cannot be saved.
   }
@@ -213,13 +172,17 @@ function rememberSyncTarget(target: SyncTarget) {
 function syncTargets(): SyncTarget[] {
   const byKey = new Map<string, SyncTarget>();
   [...CORE_SYNCS, ...readSavedTargets()].forEach((target) => byKey.set(target.cacheKey, target));
-  return Array.from(byKey.values());
+  const supervisor = storedFleetUser()?.role === "supervisor";
+  return Array.from(byKey.values()).filter((target) => !supervisor || target.url.startsWith("/api/dashboard/") || target.url.startsWith("/api/supervisor/") || target.url.startsWith("/api/reports/current-location"));
 }
 
 export function readCachedJson<T = unknown>(
   cacheKeyOrUrl: string,
   storageKind: "local" | "session" = "local"
 ): T | undefined {
+  const scope = fleetCacheScope();
+  if (!scope) return undefined;
+  cacheKeyOrUrl = scope + cacheKeyOrUrl;
   if (storageKind === "local" && memoryCache.has(cacheKeyOrUrl)) return memoryCache.get(cacheKeyOrUrl) as T;
   const storage = getCacheStorage(storageKind);
   if (!storage) return undefined;
@@ -235,47 +198,98 @@ export function readCachedJson<T = unknown>(
   }
 }
 
-function importBrowserCopies() {
-  const storage = getCacheStorage("local");
-  if (!storage) return;
-  for (let index = 0; index < storage.length; index += 1) {
-    const rawKey = storage.key(index);
-    if (!rawKey?.startsWith("fleet-cache:")) continue;
-    const cacheKey = rawKey.slice("fleet-cache:".length);
-    if (memoryCache.has(cacheKey)) continue;
-    const data = readCachedJson(cacheKey);
-    if (data !== undefined) void idbPut(cacheKey, data).catch(() => undefined);
-  }
-}
+let localDbReady: Promise<void> | undefined;
+let hydratedScope = "";
 
-export async function loadLocalFleetDb(): Promise<void> {
-  if (typeof window === "undefined") return;
-  try {
-    const rows = await idbAll();
-    rows.forEach((row) => memoryCache.set(row.key, row.data));
-  } catch {
-    // Keep the browser copy already in memory.
+export function loadLocalFleetDb(): Promise<void> {
+  const scope = fleetCacheScope();
+  if (!scope) return Promise.resolve();
+  if (hydratedScope !== scope) {
+    hydratedScope = scope;
+    memoryCache.clear();
+    localDbReady = undefined;
   }
-  importBrowserCopies();
-  window.dispatchEvent(new CustomEvent("fleet-local-ready"));
-  memoryCache.forEach((data, cacheKey) => publishCache(cacheKey, data));
-}
-
-export async function refreshLocalFleetDb(): Promise<void> {
-  if (typeof window === "undefined") return;
-  const quiet = quietPrefixes();
-  for (const target of syncTargets()) {
+  return localDbReady ??= (async () => {
     try {
-      const res = await fetch(target.url, { credentials: "include", cache: "no-store" });
-      if (!res.ok) continue;
-      const data = await res.json();
-      writeCachedJson(target.cacheKey, data, target.ttlMs);
-      const blocked = quiet.some((prefix) => target.url.startsWith(prefix));
-      if (!blocked) publishCache(target.cacheKey, data);
-    } catch {
-      // Keep the IndexedDB copy. Do not move the header time.
+      const rows = await idbAll();
+      if (fleetCacheScope() !== scope) return;
+      rows.filter((row) => row.key.startsWith(scope)).forEach((row) => memoryCache.set(row.key, row.data));
+    } catch { /* Small saved copies remain in local storage. */ }
+    if (fleetCacheScope() !== scope) return;
+    window.dispatchEvent(new CustomEvent("fleet-local-ready"));
+    memoryCache.forEach((data, key) => {
+      if (key.startsWith(scope)) publishCache(key.slice(scope.length), data);
+    });
+  })();
+}
+
+export async function resetFleetCache(): Promise<void> {
+  memoryCache.clear();
+  localDbReady = undefined;
+  hydratedScope = "";
+  clearFleetUser();
+  try { await idbClear(); } catch { /* Inaccessible stores cannot be read. */ }
+  for (const storage of [getCacheStorage("local"), getCacheStorage("session")]) {
+    if (!storage) continue;
+    for (let i = storage.length - 1; i >= 0; i--) {
+      const key = storage.key(i);
+      if (key?.startsWith("fleet-") || key?.startsWith("user-v2:")) storage.removeItem(key!);
     }
   }
+  if ("caches" in window) {
+    const names = await caches.keys();
+    await Promise.all(names.filter((name) => name.startsWith("top-fleet-api-")).map((name) => caches.delete(name)));
+  }
+}
+
+export async function logoutFleetSession(): Promise<void> {
+  try {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include", signal: AbortSignal.timeout(5_000) });
+  } catch { /* Offline logout still removes all local access. */ }
+  await resetFleetCache();
+  getCacheStorage("local")?.setItem("fleet-logged-out", "1");
+}
+
+let refreshInFlight: Promise<void> | undefined;
+
+export function refreshLocalFleetDb(): Promise<void> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = refreshFleetCopies().finally(() => { refreshInFlight = undefined; });
+  return refreshInFlight;
+}
+
+async function refreshFleetCopies(): Promise<void> {
+  if (typeof window === "undefined" || !navigator.onLine) return;
+  const scope = fleetCacheScope();
+  if (!scope) return;
+  await loadLocalFleetDb();
+  const groups = new Map<string, SyncTarget[]>();
+  for (const target of syncTargets()) {
+    const group = groups.get(target.url) || [];
+    group.push(target);
+    groups.set(target.url, group);
+  }
+  const pending = Array.from(groups.entries());
+  const coreUrls = new Set(CORE_SYNCS.map((target) => target.url));
+  // Bound concurrency, deduplicate aliases, and never overlap minute refreshes.
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    for (let entry = pending.shift(); entry; entry = pending.shift()) {
+      const [url, targets] = entry;
+      try {
+        const res = await fetch(coreUrls.has(url) ? url : liveUrl(url), {
+          credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok || res.headers.get("X-Fleet-Cached") === "1") continue;
+        const data = await res.json();
+        if (fleetCacheScope() !== scope) return;
+        for (const target of targets) {
+          writeCachedJson(target.cacheKey, data, target.ttlMs);
+          publishCache(target.cacheKey, data);
+        }
+      } catch { /* Keep the saved copy on failure. */ }
+    }
+  }));
+  if (fleetCacheScope() === scope) await pullServerSyncTime();
 }
 
 export async function storeFleetCopies(): Promise<void> {
@@ -288,15 +302,6 @@ function publishCache(cacheKey: string, data: unknown) {
 }
 
 let syncing = false;
-let syncGeneration = 0;
-let backgroundAbort: AbortController | null = null;
-
-const QUIET_PAGE_PREFIXES: Record<string, string[]> = {
-  "/map": ["/api/dashboard/"],
-  "/payments": ["/api/reports/payment-requests"],
-  "/finance": ["/api/reports/finance-", "/api/reports/income-statement", "/api/reports/daily-profit"],
-  "/reports": ["/api/reports/"],
-};
 
 export function fleetViewPath(view: string): string {
   if (view === "overview") return "/";
@@ -308,75 +313,44 @@ export function fleetViewPath(view: string): string {
 }
 
 export function yieldFleetSync() {
-  backgroundAbort?.abort();
-}
-
-function quietPrefixes(): string[] {
-  const path = window.location.pathname;
-  const page = Object.keys(QUIET_PAGE_PREFIXES).find((item) => path === item || path.startsWith(`${item}/`));
-  return page ? QUIET_PAGE_PREFIXES[page] : [];
-}
-
-function currentPageTargets(): SyncTarget[] {
-  const prefixes = quietPrefixes();
-  const targets = syncTargets();
-  if (!prefixes.length) return targets.filter((target) => target.url.startsWith("/api/dashboard/"));
-  return targets.filter((target) => prefixes.some((prefix) => target.url.startsWith(prefix)));
-}
-
-async function publishCurrentPage() {
-  const groups = new Map<string, SyncTarget[]>();
-  currentPageTargets().forEach((target) => {
-    const list = groups.get(target.url) || [];
-    list.push(target);
-    groups.set(target.url, list);
-  });
-  for (const [url, group] of groups) {
-    try {
-      const res = await fetch(url, { credentials: "include", cache: "no-store" });
-      if (!res.ok) {
-        group.forEach((target) => {
-          const local = readCachedJson(target.cacheKey);
-          if (local !== undefined) publishCache(target.cacheKey, local);
-        });
-        continue;
-      }
-      const data = await res.json();
-      group.forEach((target) => {
-        writeCachedJson(target.cacheKey, data, target.ttlMs);
-        publishCache(target.cacheKey, data);
-      });
-    } catch {
-      group.forEach((target) => {
-        const local = readCachedJson(target.cacheKey);
-        if (local !== undefined) publishCache(target.cacheKey, local);
-      });
-    }
-  }
+  // Refreshes publish data without navigating or resetting the current page.
 }
 
 export async function syncFleetNow(options: { background?: boolean } = {}) {
-  if (typeof window === "undefined") return;
-  if (options.background) return;
-  if (window.location.pathname === "/login") return;
-  if (syncing) return;
-  const generation = ++syncGeneration;
+  if (typeof window === "undefined" || window.location.pathname === "/login" || !fleetCacheScope() || syncing) return;
   syncing = true;
+  let note = "Showing the saved copy.";
   window.dispatchEvent(new CustomEvent("fleet-sync-state", { detail: { syncing: true, note: "" } }));
   try {
     await loadLocalFleetDb();
-    if (memoryCache.size === 0) await refreshLocalFleetDb();
-    currentPageTargets().forEach((target) => {
-      const local = readCachedJson(target.cacheKey);
-      if (local !== undefined) publishCache(target.cacheKey, local);
-    });
-    if (generation !== syncGeneration) return;
-  } finally {
-    if (generation === syncGeneration) {
-      syncing = false;
-      window.dispatchEvent(new CustomEvent("fleet-sync-state", { detail: { syncing: false, note: "Showing the saved copy." } }));
+    if (!navigator.onLine) return;
+    if (!options.background) {
+      const res = await fetch(`${API_BASE}/fleet/sync`, {
+        method: "POST", credentials: "include", cache: "no-store",
+        signal: AbortSignal.timeout(150_000),
+      });
+      if (!res.ok) throw new Error(`Sync failed (${res.status})`);
+      const status = await res.json() as { live?: boolean; failed_count?: number };
+      note = status.live
+        ? (status.failed_count ? "Some data refreshed; unavailable data kept from the saved copy." : "Updated from Odoo.")
+        : "Showing the saved copy. The live database did not answer.";
+    } else {
+      note = "";
     }
+    await refreshLocalFleetDb();
+  } catch {
+    note = "Showing the saved copy. Sync could not finish.";
+  } finally {
+    syncing = false;
+    window.dispatchEvent(new CustomEvent("fleet-sync-state", { detail: { syncing: false, note } }));
   }
+}
+
+function liveUrl(url: string): string {
+  const [path, query = ""] = url.split("?");
+  const params = new URLSearchParams(query);
+  params.set("refresh", "true");
+  return `${path}?${params}`;
 }
 
 export async function fetchCachedJson<T = unknown>(
@@ -386,31 +360,36 @@ export async function fetchCachedJson<T = unknown>(
 ): Promise<T> {
   const ttlMs = options.ttlMs ?? 60_000;
   const cacheKey = options.cacheKey || url;
-  const storage = getCacheStorage(options.storage ?? "local");
-  const canUseCache = !!storage && (!init?.method || init.method.toUpperCase() === "GET");
+  const canUseCache = typeof window !== "undefined" && (!init?.method || init.method.toUpperCase() === "GET");
+  if (canUseCache) await loadLocalFleetDb();
   if (canUseCache && (!init?.method || init.method.toUpperCase() === "GET")) {
     rememberSyncTarget({ url, cacheKey, ttlMs });
   }
 
+  const scope = fleetCacheScope();
   const staleData = canUseCache ? readCachedJson<T>(cacheKey, options.storage ?? "local") : undefined;
   if (canUseCache && staleData !== undefined && !options.forceRefresh) return staleData;
 
   try {
-    const res = await fetch(url, {
+    const res = await fetch(options.forceRefresh ? liveUrl(url) : url, {
       credentials: "include",
-      cache: options.forceRefresh ? "no-store" : undefined,
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
       ...init,
       headers: {
         ...(init?.headers || {}),
         ...(options.forceRefresh ? { "X-Fleet-Sync": "1" } : {}),
       },
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(text || `Request failed (${res.status})`);
+    if (res.status === 401 || res.status === 403) {
+      throw Object.assign(new Error("Access denied. Sign in with an authorized account."), { accessDenied: true });
     }
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    if (fleetCacheScope() !== scope) throw Object.assign(new Error("Account changed"), { accessDenied: true });
     const fromSavedCopy = res.headers.get("X-Fleet-Cached") === "1";
+    if (fromSavedCopy) throw new Error("Legacy shared cache ignored; use this account’s saved copy.");
     const data = await res.json() as T;
+    if (fleetCacheScope() !== scope) throw Object.assign(new Error("Account changed"), { accessDenied: true });
     if (canUseCache && !fromSavedCopy) {
       writeCachedJson(cacheKey, data, ttlMs);
       publishCache(cacheKey, data);
@@ -419,6 +398,8 @@ export async function fetchCachedJson<T = unknown>(
     }
     return data;
   } catch (error) {
+    if (error && typeof error === "object" && "accessDenied" in error) throw error;
+    if (fleetCacheScope() !== scope) throw error;
     if (staleData !== undefined) return staleData;
     throw error;
   }

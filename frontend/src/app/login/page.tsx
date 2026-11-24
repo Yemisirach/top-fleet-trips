@@ -3,7 +3,7 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Truck } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
-import { fetchJson, API_BASE, storeFleetCopies } from "@/lib/api";
+import { fetchJson, API_BASE, storeFleetCopies, resetFleetCache } from "@/lib/api";
 import { rememberFleetUser, type FleetUser } from "@/lib/scope";
 
 export default function LoginPage() {
@@ -25,6 +25,7 @@ export default function LoginPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
       } as RequestInit);
+      await resetFleetCache();
       rememberFleetUser(result.user);
       await Promise.race([
         storeFleetCopies(),

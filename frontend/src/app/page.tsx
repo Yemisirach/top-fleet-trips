@@ -131,17 +131,12 @@ export default function DashboardPage() {
     };
     const cached = readCachedJson<DailyProfit>(`reports:daily-profit:${overviewDate}`);
     apply(cached?.report_date, cached?.totals);
-    const onCopy = (event: Event) => {
-      const detail = (event as CustomEvent<{ report_date?: string | null; totals?: DailyProfit["totals"] | null }>).detail;
-      apply(detail?.report_date, detail?.totals);
-    };
     const onLocal = () => {
       const saved = readCachedJson<DailyProfit>(`reports:daily-profit:${overviewDate}`);
       apply(saved?.report_date, saved?.totals);
       const payments = readCachedJson<PaymentRequest[]>("reports:payment-requests:odoo-db-v6-trip");
       if (payments) setPaymentRequests(payments);
     };
-    window.addEventListener("fleet-shared-copy", onCopy);
     window.addEventListener("fleet-local-ready", onLocal);
     window.addEventListener("fleet-cache-updated", onLocal);
     fetchCachedJson<DailyProfit>(`${API_BASE}/reports/daily-profit?report_date=${overviewDate}`, undefined, {
@@ -150,7 +145,6 @@ export default function DashboardPage() {
     }).then((report) => apply(report.report_date, report.totals)).catch(() => undefined);
     return () => {
       cancelled = true;
-      window.removeEventListener("fleet-shared-copy", onCopy);
       window.removeEventListener("fleet-local-ready", onLocal);
       window.removeEventListener("fleet-cache-updated", onLocal);
     };

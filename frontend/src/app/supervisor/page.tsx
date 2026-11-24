@@ -11,6 +11,7 @@ import { API_BASE, DASHBOARD_CACHE_KEY, fetchCachedJson, readCachedJson } from "
 import { driverPhone, isSupervisor, trackerKey, scopeDashboard } from "@/lib/scope";
 import { buildJourneyRoute, getOrderCount, stateLabel } from "@/lib/formatters";
 import type { DashboardSnapshot } from "@/types/dashboard";
+import SupervisorDailyReport from "@/components/reports/SupervisorDailyReport";
 import type { MayetVehicle } from "@/types/trip";
 
 interface GpsPlace {
@@ -62,6 +63,12 @@ export default function SupervisorPage() {
       .catch(() => undefined);
     const onLocal = (event: Event) => {
       const detail = (event as CustomEvent<{ cacheKey?: string; data?: DashboardSnapshot }>).detail;
+      if (detail?.cacheKey === "dashboard:gps-places:tracker" || detail?.cacheKey === "dashboard:gps-places") {
+        setPlaces((detail.data as { places?: GpsPlace[] })?.places || []);
+      }
+      if (detail?.cacheKey === "dashboard:mayet:vehicles:tracker" || detail?.cacheKey === "dashboard:mayet:vehicles") {
+        setGpsVehicles((detail.data as { vehicles?: MayetVehicle[] })?.vehicles || []);
+      }
       if (event.type === "fleet-local-ready" || detail?.cacheKey === DASHBOARD_CACHE_KEY) {
         const saved = detail?.data || readCachedJson<DashboardSnapshot>(DASHBOARD_CACHE_KEY);
         if (saved) setData(scopeDashboard(saved, user));
@@ -122,6 +129,7 @@ export default function SupervisorPage() {
             <Link className="btn primary" href="/map"><Map size={16} /> Map</Link>
             <Link className="btn" href="/supervisor?view=journeys"><Truck size={16} /> Journeys</Link>
           </div>
+          {!journeyView && isSupervisor(user) && <SupervisorDailyReport />}
           <div className="muted">{rows.length} assigned vehicles · {journeys.length} journeys</div>
           {!isSupervisor(user) && user && <p className="muted">This page is the supervisor home. Managers still use Overview.</p>}
           {!journeyView && <div style={{ overflowX: "auto" }}>

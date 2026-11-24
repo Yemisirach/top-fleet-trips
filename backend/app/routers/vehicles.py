@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.core.auth import require_manager
 from app.core.server_cache import cache_get, cache_get_stale, cache_set
 from app.services.fleet_odoo_service import get_fleet_vehicles, get_fleet_vehicle_by_id
 from app.models.trip import VehicleSupervisor
@@ -67,6 +68,7 @@ async def get_vehicle(
 @router.post("/supervisors")
 async def post_supervisors(
     payload: list[VehicleSupervisor],
+    user: dict = Depends(require_manager),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, int]:
     """Assign supervisors to vehicles in the Odoo-backed supervisor table."""

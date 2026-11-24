@@ -1,4 +1,4 @@
-export const serviceWorkerSource = String.raw`const CACHE_VERSION = "v8";
+export const serviceWorkerSource = String.raw`const CACHE_VERSION = "v10";
 const STATIC_CACHE = "top-fleet-static-" + CACHE_VERSION;
 const PAGE_CACHE = "top-fleet-pages-" + CACHE_VERSION;
 const API_CACHE = "top-fleet-api-" + CACHE_VERSION;
@@ -31,7 +31,7 @@ self.addEventListener("activate", (event) => {
 
 async function fromCache(cacheName, request) {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(request) || await cache.match(new URL(request.url).pathname);
+  const cached = await cache.match(request);
   if (!cached || !cached.ok) return undefined;
   const headers = new Headers(cached.headers);
   headers.set("X-Fleet-Cached", "1");
@@ -46,6 +46,10 @@ async function networkFirst(request, cacheName) {
   const cache = await caches.open(cacheName);
   try {
     const fresh = await fetch(request);
+    if (fresh && fresh.status >= 500) {
+      const saved = await fromCache(cacheName, request);
+      if (saved) return saved;
+    }
     if (fresh && fresh.ok) cache.put(request, fresh.clone()).catch(() => undefined);
     return fresh;
   } catch {
@@ -123,10 +127,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname === "/service-worker" || url.pathname === "/sw.js") return;
-  if (url.pathname.startsWith("/api/auth/")) return;
+  if (url.pathname.startsWith("/api/auth/") || url.pathname.startsWith("/api/fleet/")) return;
 
   if (url.pathname.startsWith("/api/")) {
-    event.respondWith(networkFirst(request, API_CACHE));
+    // Business data is cached by account in IndexedDB, never in a shared HTTP cache.
     return;
   }
 
@@ -135,7 +139,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (request.mode === "navigate" || url.searchParams.has("_rsc") || request.headers.get("RSC") === "1") {
+  if (request.mode === "navigate" || request.headers.get("X-Fleet-Page") === "1" || url.searchParams.has("_rsc") || request.headers.get("RSC") === "1") {
     event.respondWith(savedPageFirst(event, request));
   }
 });`;

@@ -3,6 +3,7 @@ import type { MayetVehicle, Trip } from "@/types/trip";
 
 export type FleetUser = {
   username?: string;
+  expires_at?: number;
   name?: string;
   role?: string;
 };
@@ -10,23 +11,39 @@ export type FleetUser = {
 const ROLE_KEY = "fleet-role";
 const NAME_KEY = "fleet-name";
 
+const USER_KEY = "fleet-user-v2";
+const OWNER_KEY = "fleet-active-user-v2";
+
 export function rememberFleetUser(user?: FleetUser | null) {
-  if (typeof window === "undefined" || !user) return;
+  if (typeof window === "undefined" || !user?.username || window.localStorage.getItem("fleet-logged-out") === "1") return;
+  const saved = { ...user, expires_at: user.expires_at || Math.floor(Date.now() / 1000) + 12 * 60 * 60 };
+  window.sessionStorage.setItem(USER_KEY, JSON.stringify(saved));
   window.sessionStorage.setItem(ROLE_KEY, user.role || "");
   window.sessionStorage.setItem(NAME_KEY, user.name || "");
+  window.localStorage.setItem(OWNER_KEY, `${user.username}:${user.role}:${user.name}`);
 }
 
 export function clearFleetUser() {
   if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(USER_KEY);
   window.sessionStorage.removeItem(ROLE_KEY);
   window.sessionStorage.removeItem(NAME_KEY);
+  window.localStorage.removeItem(OWNER_KEY);
 }
 
 export function storedFleetUser(): FleetUser | null {
   if (typeof window === "undefined") return null;
-  const role = window.sessionStorage.getItem(ROLE_KEY);
-  if (!role) return null;
-  return { role, name: window.sessionStorage.getItem(NAME_KEY) || "" };
+  try {
+    const user = JSON.parse(window.sessionStorage.getItem(USER_KEY) || "null") as FleetUser | null;
+    if (!user?.username || !user.expires_at || user.expires_at <= Date.now() / 1000) return null;
+    if (window.localStorage.getItem(OWNER_KEY) !== `${user.username}:${user.role}:${user.name}`) return null;
+    return user;
+  } catch { return null; }
+}
+
+export function fleetCacheScope(): string {
+  const user = storedFleetUser();
+  return user ? `user-v2:${encodeURIComponent(JSON.stringify([user.username, user.role, user.name]))}:` : "";
 }
 
 export function isSupervisor(user?: FleetUser | null) {

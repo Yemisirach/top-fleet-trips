@@ -1,5 +1,9 @@
 import base64
 import asyncio
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import hashlib
 import hmac
 import json
@@ -64,9 +68,7 @@ NAME_BY_LOGIN = {
     "getnet.topwhaterethiopia.com": "Getnet",
 }
 
-# Supervisor app logins. Username is the person's name. Password is the shared
-# supervisor password, stored as a bcrypt hash, never as plaintext.
-SUPERVISOR_PASSWORD_HASH = "$2b$12$q8v/gzCGvzVC6Jgmu5zqzOn/TdV9lYI3hd9WxPAGnMQM/v5ue2GVK"
+# Known supervisor name aliases. Credentials must be configured individually.
 SUPERVISOR_NAMES = (
     "Ketoran Tamana",
     "Achalu Jifara",
@@ -88,6 +90,7 @@ def _supervisor_login_keys(name: str) -> list[str]:
     if parts:
         keys.add(".".join(parts))
         keys.add(" ".join(parts))
+        keys.add(parts[0])
     return sorted(keys)
 
 
@@ -135,14 +138,10 @@ else:
 
 for _supervisor_name in SUPERVISOR_NAMES:
     for _login in _supervisor_login_keys(_supervisor_name):
-        USERS.setdefault(_login, {
-            "username": _login,
-            "password": SUPERVISOR_PASSWORD_HASH,
-            "role": "supervisor",
-            "name": _supervisor_name,
-        })
-        USERS[_login]["role"] = "supervisor"
-        USERS[_login]["name"] = _supervisor_name
+        if _login in USERS:
+            USERS[_login]["role"] = "supervisor"
+            USERS[_login]["name"] = _supervisor_name
+
 
 
 def _b64encode(data: bytes) -> str:
@@ -170,6 +169,7 @@ def public_user(user: dict) -> dict:
         "role": user["role"],
         "auth_source": user.get("auth_source", "app"),
         "odoo_user_id": user.get("odoo_user_id"),
+        "expires_at": user.get("exp", int(time.time()) + AUTH_SESSION_SECONDS),
     }
 
 
@@ -333,12 +333,15 @@ async def authenticate(username: str, password: str) -> Optional[dict]:
         if stored.startswith("$2b$") or stored.startswith("$2a$"):
             valid = _verify_password(password, stored)
         else:
-            valid = hmac.compare_digest(str(user["password"]), str(password))
+            valid = os.getenv("FLEET_INSECURE_DEV") == "1" and hmac.compare_digest(str(user["password"]), str(password))
         if not valid:
             return None
 
     if not user:
         return None
+
+    if user.get("role") == "supervisor":
+        return {**user, "auth_source": "app"}
 
     odoo_user = await _odoo_user_from_db(login)
     if odoo_user:

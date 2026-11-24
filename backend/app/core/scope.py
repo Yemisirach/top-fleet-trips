@@ -14,7 +14,7 @@ def supervisor_name(user: Optional[dict]) -> Optional[str]:
     if not user or user.get("role") != "supervisor":
         return None
     name = str(user.get("name") or user.get("username") or "").strip()
-    return name or None
+    return name or "__unassigned_supervisor__"
 
 
 def names_match(left: Any, right: Any) -> bool:
@@ -103,14 +103,14 @@ def scope_dashboard(payload: dict, user: Optional[dict]) -> dict:
         status_counts[state] = status_counts.get(state, 0) + 1
     revenue = sum(float(row.get("total_revenue") or 0) for row in journeys)
     expense = sum(float(row.get("total_expense") or 0) for row in journeys)
-    summary = dict(scoped.get("summary") or {})
+    summary = {}
     summary.update({
         "total_vehicles": len({str(row.get("vehicle_id") or row.get("vehicle_plate")) for row in locations}) or len(locations),
         "total_journeys": len(journeys),
+        "total_drivers": len({row.get("driver_name") for row in locations if row.get("driver_name")}),
         "total_revenue": revenue,
         "total_expense": expense,
     })
-    payment = scoped.get("payment_summary") if isinstance(scoped.get("payment_summary"), dict) else {}
     scoped.update({
         "vehicle_locations": locations,
         "recent_journeys": journeys,
@@ -125,12 +125,18 @@ def scope_dashboard(payload: dict, user: Optional[dict]) -> dict:
         "total_revenue": revenue,
         "total_expense": expense,
         "total_profit": revenue - expense,
-        "payment_summary": {key: 0 if isinstance(value, (int, float)) else value for key, value in payment.items()},
-        "custom_kpis": [],
         "scope": "assigned",
         "supervisor_name": name,
     })
-    return scoped
+    # Explicitly project permitted fields. New company-wide aggregates must not
+    # silently become visible to supervisors, nor be disguised as zero totals.
+    allowed = {
+        "_mode", "_cache_warning", "_warning", "vehicle_locations", "recent_journeys",
+        "all_trip_rows", "vehicle_conflicts", "driver_conflicts", "vehicle_conflict_count",
+        "driver_conflict_count", "journeys_by_status", "active_journey_count", "summary",
+        "total_revenue", "total_expense", "total_profit", "scope", "supervisor_name",
+    }
+    return {key: value for key, value in scoped.items() if key in allowed}
 
 
 def scope_location_rows(rows: list[dict], user: Optional[dict]) -> list[dict]:

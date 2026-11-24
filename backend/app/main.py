@@ -1,3 +1,9 @@
+import sys
+import asyncio
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,7 +14,7 @@ from contextlib import asynccontextmanager, suppress
 
 from app.core.auth import user_from_request
 from app.routers import auth, catalog, dashboard, health, integrations, reports, trips, vehicles, journeys
-from app.routers import fleet_sync
+from app.routers import fleet_sync, supervisor
 from app.services.fleet_store import store_loop
 
 
@@ -58,23 +64,42 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse({"detail": "Login required"}, status_code=401)
         return RedirectResponse("/login.html", status_code=303)
 
-    if user.get("role") == "supervisor" and _supervisor_blocked(path):
+    if user.get("role") not in {"manager", "salesperson", "supervisor"}:
+        return JSONResponse({"detail": "Unknown role"}, status_code=403)
+
+    if user.get("role") == "supervisor" and _supervisor_blocked(path) and not _assigned_detail(path, user, request.method):
         return JSONResponse({"detail": "Supervisors can only open assigned vehicles."}, status_code=403)
 
     return await call_next(request)
 
 
 def _supervisor_blocked(path: str) -> bool:
-    blocked = (
-        "/api/reports/finance",
-        "/api/reports/payment",
-        "/api/reports/daily-profit",
-        "/api/reports/yearly-profit",
-        "/api/reports/income",
-        "/api/reports/whatsapp",
-        "/api/reports/responsible",
-    )
-    return any(part in path for part in blocked)
+    if not path.startswith("/api/"):
+        return path.endswith(".html") and path not in {"/map.html", "/detail.html"}
+    allowed = {
+        "/api/auth/me", "/api/fleet/sync", "/api/fleet/sync-status", "/api/fleet/shared-copy",
+        "/api/dashboard/full", "/api/dashboard/mayet/vehicles", "/api/dashboard/gps-places",
+        "/api/reports/current-location", "/api/reports/current-location-summary",
+        "/api/supervisor/daily-report",
+    }
+    return path.rstrip("/") not in allowed and not path.startswith(("/api/dashboard/gps/", "/api/dashboard/vehicle-history/"))
+
+
+
+def _assigned_detail(path: str, user: dict, method: str) -> bool:
+    """Only expose detail/timeline routes belonging to the scoped dashboard."""
+    import re
+    from app.core.scope import _dashboard_cache, scope_dashboard
+    if method != "GET":
+        return False
+    match = re.fullmatch(r"/api/(journeys|trips)/([^/]+)(?:/(timeline|trips))?/?", path)
+    if not match:
+        return False
+    payload = scope_dashboard(_dashboard_cache(), user)
+    rows = list(payload.get("recent_journeys") or [])
+    if match[1] == "trips":
+        rows = list(payload.get("all_trip_rows") or []) + [trip for journey in rows for trip in journey.get("trips", [])]
+    return any(str(row.get("id")) == match[2] for row in rows)
 
 
 @app.exception_handler(asyncio.TimeoutError)
@@ -131,3 +156,5 @@ app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"]
 app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(journeys.router, prefix="/api", tags=["journeys"])
 app.include_router(fleet_sync.router, prefix="/api/fleet", tags=["fleet-sync"])
+
+app.include_router(supervisor.router, prefix="/api/supervisor", tags=["supervisor"])

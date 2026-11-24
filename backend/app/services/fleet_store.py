@@ -42,7 +42,7 @@ async def _refresh(name: str, cache_key: str, call: Callable[[object], Awaitable
 
 
 async def sync_fleet_store(source: str) -> dict:
-    """Refresh the saved fleet copy. One dataset at a time, so the pool stays free."""
+    """Refresh saved copies with bounded concurrency, leaving pool capacity for reads."""
     if _lock.locked() and source == "background":
         status = cache_sync_status()
         status["live"] = False
@@ -67,11 +67,16 @@ async def sync_fleet_store(source: str) -> dict:
         ]
         stored: list[str] = []
         failed: list[str] = []
-        for name, cache_key, call in jobs:
-            if await _refresh(name, cache_key, call):
-                stored.append(name)
-            else:
-                failed.append(name)
+        semaphore = asyncio.Semaphore(3)
+
+        async def run_job(name, cache_key, call):
+            async with semaphore:
+                if await _refresh(name, cache_key, call):
+                    stored.append(name)
+                else:
+                    failed.append(name)
+
+        await asyncio.gather(*(run_job(*job) for job in jobs))
         if stored:
             status = cache_mark_synced(source, stored, failed)
         else:
