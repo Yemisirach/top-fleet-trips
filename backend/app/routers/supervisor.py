@@ -45,7 +45,7 @@ def assemble_report(rows, expenses, report_date, user):
     return {
         "report_date": report_date.isoformat(), "source": "odoo", "saved": False,
         "synced_at": datetime.now(timezone.utc).isoformat(),
-        "date_basis": "Trip departure date, falling back to creation date",
+        "date_basis": "Trip last updated on the selected day (East Africa time)",
         "vehicles": list(vehicles.values()),
         "cost": sum(v["cost"] for v in vehicles.values()),
         "revenue": sum(v["revenue"] for v in vehicles.values()),
@@ -59,13 +59,13 @@ async def daily_report(
 ):
     day = report_date or datetime.now(ZoneInfo("Africa/Addis_Ababa")).date()
     identity = hashlib.sha256(json.dumps([user.get("username"), user.get("role"), user.get("name")]).encode()).hexdigest()
-    key = f"fleet:supervisor:daily:v1:{identity}:{day}"
+    key = f"fleet:supervisor:daily:v3:{identity}:{day}"
     if not refresh:
         cached = cache_get(key)
         if cached is not None:
             return {**cached, "saved": True}
     try:
-        rows = await fetch_trip_rows(db, from_date=day, to_date=day)
+        rows = await fetch_trip_rows(db, activity_date=day)
         if user.get("role") == "supervisor":
             rows = [r for r in rows if names_match(r.get("supervisor_name"), user.get("name") or user.get("username"))]
         expenses = {}

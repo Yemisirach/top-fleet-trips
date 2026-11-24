@@ -353,8 +353,17 @@ export default function YearlyReport() {
     }).catch(() => {
       if (!cancelled) setReadState("failed");
     });
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey: string; data: YearPayload }>).detail;
+      if (!cancelled && detail?.cacheKey === `reports:yearly-profit:v3:${year}` && detail.data.ethiopian_year === year) {
+        setPayload(detail.data);
+        setReadState("ready");
+      }
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
     return () => {
       cancelled = true;
+      window.removeEventListener("fleet-cache-updated", onUpdate);
     };
   }, [year]);
 

@@ -53,11 +53,10 @@ vehicle supervisor assignments and approve/edit payment requests. Salespeople ca
 create payment requests and view the broader reports.
 
 The supervisor home includes a date-selected daily report from
-`GET /api/supervisor/daily-report`. It uses trip departure date, falling back to
-creation date, and matches current Odoo supervisor assignments by name. Expenses
+`GET /api/supervisor/daily-report`. It includes trips last updated on the selected day in East Africa time, and matches current Odoo supervisor assignments by name. Expenses
 come from trip expense lines, or payment request lines when no trip expenses exist;
 the two sources are not added together. Revenue is the trip's own receivables,
-including unconfirmed amounts shown separately. These are trip-date totals, not a
+including unconfirmed amounts shown separately. These are activity-day snapshots, not a
 cashbook of payments received that day. No demo or hardcoded business records are
 used. Failed first loads show unavailable; saved reports retain their original sync
 time and explicit saved-data label. A successful empty result means no trips on the
@@ -72,3 +71,5 @@ in FLEET_USERS or use valid Odoo authentication; automatic shared-password accou
 and alternate fallback passwords have been removed. Existing sessions should be
 invalidated during rollout by rotating FLEET_AUTH_SECRET, and users must sign in
 again to establish the new offline identity.
+
+Weekly and yearly views subscribe to the minute cache updates and query Odoo on opening. Their financial date grouping remains unchanged. The supervisor daily report uses only the last update date; it does not reconstruct historical versions of a trip.

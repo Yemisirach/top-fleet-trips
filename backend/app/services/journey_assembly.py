@@ -325,9 +325,13 @@ async def fetch_trip_rows(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     limit: Optional[int] = None,
+    activity_date: Optional[date] = None,
 ) -> list[dict]:
     conditions: list[str] = []
     params: dict[str, Any] = {}
+    if activity_date:
+        conditions.append("(t.write_date AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date = :activity_date")
+        params["activity_date"] = activity_date
     if plate:
         conditions.append("COALESCE(v.license_plate, '') ILIKE :plate")
         params["plate"] = f"%{plate}%"

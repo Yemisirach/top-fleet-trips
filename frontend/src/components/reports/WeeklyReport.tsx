@@ -100,7 +100,7 @@ export default function WeeklyReport() {
       void fetchCachedJson<DailyProfit>(
         `${API_BASE}/reports/daily-profit?report_date=${gregorian}`,
         undefined,
-        { ttlMs: 60_000, cacheKey: `reports:weekly-day:v1:${gregorian}` }
+        { ttlMs: 60_000, cacheKey: `reports:weekly-day:v1:${gregorian}`, forceRefresh: true }
       ).then((report) => {
         if (cancelled) return;
         setDays((current) => current.map((day) => (
@@ -108,8 +108,17 @@ export default function WeeklyReport() {
         )));
       }).catch(() => undefined);
     });
+    const onUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ cacheKey: string; data: DailyProfit }>).detail;
+      const gregorian = dates.find((day) => detail?.cacheKey === `reports:weekly-day:v1:${day}`);
+      if (!gregorian || cancelled) return;
+      setDays((current) => current.map((day) => day.gregorian === gregorian
+        ? { gregorian, rows: storedRows(detail.data, gregorian) } : day));
+    };
+    window.addEventListener("fleet-cache-updated", onUpdate);
     return () => {
       cancelled = true;
+      window.removeEventListener("fleet-cache-updated", onUpdate);
     };
   }, [start, end]);
 

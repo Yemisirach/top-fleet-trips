@@ -21,7 +21,7 @@ export default function SupervisorDailyReport() {
 
   useEffect(() => {
     let cancelled = false;
-    const key = `supervisor:daily:${date}`;
+    const key = `supervisor:daily:v3:${date}`;
     const apply = (data: Report, saved: boolean) => {
       if (cancelled || data.report_date !== date) return;
       setReport(data);
@@ -52,7 +52,7 @@ export default function SupervisorDailyReport() {
       <label>Report date <input type="date" value={date} onChange={(event) => { selectDate(event.target.value); }} /></label>
       <button className="btn" onClick={() => selectDate(addisTodayKey())}>Today</button>
       <p className="muted" role="status">{note}</p>
-      <p className="muted">By trip departure date, or creation date when departure is missing. Revenue is the trip’s recorded receivables, including unconfirmed amounts; it is not necessarily cash collected. Costs use trip expense lines, or payment request lines when no trip expenses exist.</p>
+      <p className="muted">Only trips last updated on the selected day, in East Africa time. Revenue is the trip’s recorded receivables, including unconfirmed amounts; it is not necessarily cash collected. Costs use trip expense lines, or payment request lines when no trip expenses exist.</p>
       {report && <>
         <p><strong>Total costs: {money(report.cost)} · Revenue: {money(report.revenue)} · Difference: {money(report.revenue - report.cost)}</strong></p>
         {report.vehicles.length === 0 && <p>No trips for your assigned vehicles on this date in the synced Odoo data.</p>}
