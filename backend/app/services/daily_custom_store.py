@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sqlite3
+from contextlib import closing
 from typing import Any, Optional
 
 
@@ -45,7 +46,7 @@ def get_custom_entries(report_date: str) -> dict[str, dict[str, Any]]:
     """Retrieve all custom overrides for a specific date, keyed by row_key."""
     db_path = _get_db_path()
     try:
-        with sqlite3.connect(db_path, timeout=5.0) as conn:
+        with closing(sqlite3.connect(db_path, timeout=5.0)) as conn:
             _init_db(conn)
             cursor = conn.execute("""
                 SELECT row_key, plate_number, trip_id, actual, remark, updated_by, updated_at
@@ -65,13 +66,11 @@ def get_custom_entries(report_date: str) -> dict[str, dict[str, Any]]:
                     "updated_at": at,
                 }
                 result[row_key] = item
-                if plate:
-                    result[f"plate:{plate}"] = item
                 if trip_id:
                     result[f"trip:{trip_id}"] = item
             return result
     except Exception:
-        return {}
+        raise
 
 
 def save_custom_entry(
@@ -86,7 +85,7 @@ def save_custom_entry(
     """Insert or update a single custom override entry."""
     db_path = _get_db_path()
     now_iso = datetime.now(timezone.utc).isoformat()
-    with sqlite3.connect(db_path, timeout=5.0) as conn:
+    with closing(sqlite3.connect(db_path, timeout=5.0)) as conn:
         _init_db(conn)
         conn.execute("""
             INSERT INTO daily_profit_custom (report_date, row_key, plate_number, trip_id, actual, remark, updated_by, updated_at)
@@ -130,7 +129,7 @@ def save_custom_entries_bulk(
     db_path = _get_db_path()
     now_iso = datetime.now(timezone.utc).isoformat()
     count = 0
-    with sqlite3.connect(db_path, timeout=5.0) as conn:
+    with closing(sqlite3.connect(db_path, timeout=5.0)) as conn:
         _init_db(conn)
         for entry in entries:
             row_key = str(entry.get("row_key") or entry.get("plate_number") or "")

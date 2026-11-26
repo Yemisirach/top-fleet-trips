@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Roboto } from "next/font/google";
 import * as ExcelJS from "exceljs";
 import { saveAs } from "file-saver";
 import { fetchCachedJson, API_BASE } from "@/lib/api";
@@ -9,7 +8,6 @@ import { ethiopianLabel } from "@/lib/ethiopianDate";
 import { money } from "@/lib/formatters";
 import type { DailyProfit, DailyProfitRow } from "@/types/trip";
 
-const roboto = Roboto({ subsets: ["latin"], weight: ["400", "700"], style: ["normal"], display: "swap" });
 
 const COMPANY = "TOP BEVERAGE INDUSTRIE";
 const DAY_HEADERS = [
@@ -68,7 +66,7 @@ function storedRows(report: DailyProfit | null, gregorian: string) {
 }
 
 function remarkText(row: DailyProfitRow) {
-  return String(row.revenue_description || "").trim();
+  return String(row.remark ?? row.revenue_description ?? "").trim();
 }
 
 function vehicleKey(row: DailyProfitRow) {
@@ -278,12 +276,12 @@ export default function WeeklyReport() {
     padding: "8px 10px",
     textAlign: "center" as const,
     fontStyle: "normal" as const,
-    fontFamily: roboto.style.fontFamily,
+    fontFamily: "Arial, sans-serif",
   };
   const nameBox = { ...box, textAlign: "left" as const };
 
   return (
-    <div className={roboto.className} style={{ display: "grid", gap: 16, fontStyle: "normal" }}>
+    <div className="fleet-report" style={{ display: "grid", gap: 16, fontStyle: "normal" }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
         <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
           From, Gregorian saved in database

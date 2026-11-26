@@ -1856,7 +1856,7 @@ export default function ReportsPage() {
                           <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}>{r.plate_number}</td>
                           <td style={{ border: "1px solid var(--border)", padding: "6px 12px", fontStyle: "italic" }}>{r.remarks}</td>
                           <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>
-                            {money(r.actual_daily_total_revenue || 0)}
+                            {money(r.rent_amount || 0)}
                             {(r.unconfirmed_amount || 0) > 0 && (
                               <div className="muted" style={{ fontSize: 11 }}>Unconfirmed {money(r.unconfirmed_amount || 0)}</div>
                             )}

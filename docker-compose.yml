@@ -7,6 +7,9 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - FLEET_DATA_DIR=/app/data
+    volumes:
+      - fleet_report_data:/app/data
     ports:
       - "8004:8004"
     depends_on:
@@ -67,3 +70,4 @@ services:
 
 volumes:
   redis_data:
+  fleet_report_data:

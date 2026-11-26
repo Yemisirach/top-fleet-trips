@@ -73,3 +73,18 @@ invalidated during rollout by rotating FLEET_AUTH_SECRET, and users must sign in
 again to establish the new offline identity.
 
 Weekly and yearly views subscribe to the minute cache updates and query Odoo on opening. Their financial date grouping remains unchanged. The supervisor daily report uses only the last update date; it does not reconstruct historical versions of a trip.
+
+
+## Manager report storage deployment
+
+Manager edits are stored in SQLite at `/app/data/daily_profit_custom.db`. Compose
+mounts the `fleet_report_data` volume there. Before replacing an existing container,
+back up its existing SQLite database using SQLite's backup facility (including any
+uncheckpointed WAL data), then restore the backup into the new volume. Adding an
+empty volume does not migrate previous container-local edits automatically.
+
+Actual revenue overrides affect daily, weekly, and yearly totals; Odoo revenue is
+retained separately. Empty Actual restores Odoo revenue; zero is a real override.
+Remarks appear in weekly and yearly views and exports. Overrides match date and
+trip, never another trip on the same plate. Payment driver totals sum the displayed
+request lines under the current filters; item numbering remains sequential.

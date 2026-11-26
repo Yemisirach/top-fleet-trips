@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Roboto } from "next/font/google";
 import * as ExcelJS from "exceljs";
 import { saveAs } from "file-saver";
 import { fetchCachedJson, API_BASE } from "@/lib/api";
@@ -14,11 +13,11 @@ import {
   gregorianToEthiopian,
 } from "@/lib/ethiopianDate";
 
-const roboto = Roboto({ subsets: ["latin"], weight: ["400", "700"], style: ["normal"], display: "swap" });
 const COMPANY = "TOP BEVERAGE INDUSTRIE";
 
 type TripRow = {
   trip_id: number;
+  remark?: string | null;
   vehicle_id?: number;
   trip_day: string;
   driver_name: string;
@@ -49,6 +48,7 @@ type YearPayload = {
 type Bucket = { cost: number; revenue: number };
 type VehicleLine = {
   key: string;
+  remarks?: string[];
   supervisor: string;
   driver: string;
   plate: string;
@@ -136,6 +136,7 @@ function buildLines(rows: TripRow[], vehicles: VehicleRecord[], year: number, mo
     if (!current.supervisor && supervisor) current.supervisor = supervisor;
     if (!current.plate && plate) current.plate = plate;
     if (!current.vehicleType && row.vehicle_type) current.vehicleType = row.vehicle_type.trim();
+    if (row.remark?.trim()) current.remarks = Array.from(new Set([...(current.remarks || []), row.remark.trim()]));
     current.buckets[index].cost += amount(row.cost_total);
     current.buckets[index].revenue += amount(row.revenue_total);
     byVehicle.set(key, current);
@@ -272,7 +273,7 @@ function addSheet(
   const firstDataRow = (sheet.lastRow?.number || 7) + 1;
   lines.forEach((line, index) => {
     const totals = lineTotals(line);
-    const values: Array<string | number> = [index + 1, line.supervisor, line.driver, line.plate, line.vehicleType];
+    const values: Array<string | number> = [index + 1, line.supervisor, [line.driver, ...(line.remarks || []).map((remark) => `Remark: ${remark}`)].join("\n"), line.plate, line.vehicleType];
     line.buckets.forEach((bucket, bucketIndex) => {
       const sunday = headers[bucketIndex]?.sunday;
       values.push(sunday && !bucket.cost ? "" : (bucket.cost || ""));
@@ -428,7 +429,7 @@ export default function YearlyReport() {
   const subtotalCost = subtotal.reduce((sum, bucket) => sum + bucket.cost, 0);
 
   return (
-    <div className={roboto.className} style={{ display: "flex", flexDirection: "column", gap: 12, height: "calc(100vh - 180px)", minHeight: 480, fontStyle: "normal" }}>
+    <div className="fleet-report" style={{ display: "flex", flexDirection: "column", gap: 12, height: "calc(100vh - 180px)", minHeight: 480, fontStyle: "normal" }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
         <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
           Ethiopian year
@@ -507,7 +508,7 @@ export default function YearlyReport() {
                   {supervisorSpan > 0 && (
                     <td rowSpan={supervisorSpan} className="pin-b" style={{ ...box, verticalAlign: "middle", textAlign: "center", fontWeight: 700 }}>{line.supervisor}</td>
                   )}
-                  <td style={nameBox}>{line.driver}</td>
+                  <td style={nameBox}>{line.driver}{line.remarks?.map((remark) => <div key={remark} style={{ fontSize: 11, whiteSpace: "normal" }}>Remark: {remark}</div>)}</td>
                   <td style={box}>{line.plate}</td>
                   <td style={box}>{line.vehicleType}</td>
                   {line.buckets.map((bucket, bucketIndex) => {

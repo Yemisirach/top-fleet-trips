@@ -347,7 +347,7 @@ export default function ReportsPage() {
       .filter(approvedPaymentRequest)
       .flatMap((pr) => requestLines(pr).map((line) => ({
         date: (pr.date || pr.approved_on || new Date().toISOString()).slice(0, 10),
-        supervisor: pr.supervisor_name || pr.requester_name || "Unassigned",
+        supervisor: pr.driver_name || pr.supervisor_name || pr.requester_name || "Unassigned",
         vehicle: pr.vehicle_plate || "",
         route: paymentRouteName(pr),
         requestId: pr.id,
@@ -368,6 +368,12 @@ export default function ReportsPage() {
         String(a.requestId).localeCompare(String(b.requestId))
       );
   }, [filteredPaymentRequests, paymentRouteName]);
+
+  const driverRequestedTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    dailySupervisorRows.forEach((row) => totals.set(row.supervisor, (totals.get(row.supervisor) || 0) + Number(row.lineTotal || 0)));
+    return totals;
+  }, [dailySupervisorRows]);
 
   const dailySupervisorTotal = dailySupervisorRows.reduce((sum, row) => sum + Number(row.lineTotal || 0), 0);
 
@@ -443,7 +449,7 @@ export default function ReportsPage() {
     dailySupervisorRows.forEach((row, index) => {
       const dataRow = sheet.addRow([
         index + 1,
-        row.supervisor,
+        `${row.supervisor}\nRequested total: ${money(driverRequestedTotals.get(row.supervisor) || 0)}`,
         row.vehicle,
         row.route,
         paymentRequestItemLines(row.item, row.description).join("\n"),
@@ -512,7 +518,7 @@ export default function ReportsPage() {
       new Blob([buffer]),
       `Daily_Supervisor_Payment_Requests_${paymentFilterDate || new Date().toISOString().slice(0, 10)}.xlsx`
     );
-  }, [dailySupervisorRows, dailySupervisorTotal, paymentFilterDate]);
+  }, [dailySupervisorRows, dailySupervisorTotal, driverRequestedTotals, paymentFilterDate]);
 
   const exportDailyProfit = useCallback(async () => {
     if (!dailyProfit) return;
@@ -1606,8 +1612,8 @@ export default function ReportsPage() {
                         const routeSpan = repeatedGroupSpan(rows, index, (item) => `${item.supervisor}|${item.vehicle}|${item.route}`);
                         return (
                         <tr key={`${row.requestId}-${index}`}>
-                          <td className="daily-report-no">{index + 1}</td>
-                          {supervisorSpan > 0 && <td className="daily-report-span" rowSpan={supervisorSpan}>{row.supervisor || "Unassigned"}</td>}
+                          <td className="daily-report-no" aria-label={`Row ${index + 1}`}>{index + 1}</td>
+                          {supervisorSpan > 0 && <td className="daily-report-span" rowSpan={supervisorSpan}>{row.supervisor || "Unassigned"}<div style={{ marginTop: 8, whiteSpace: "nowrap" }}>Requested total: {money(driverRequestedTotals.get(row.supervisor) || 0)}</div></td>}
                           {plateSpan > 0 && <td className="daily-report-span" rowSpan={plateSpan}>{row.vehicle || "–"}</td>}
                           {routeSpan > 0 && <td className="daily-report-span" rowSpan={routeSpan}>{row.route || "–"}</td>}
                           <td>{paymentRequestItemLines(row.item, row.description).map((line, lineIndex) => <div key={lineIndex}>{line}</div>)}</td>

@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 import asyncio
 import re
+import math
 from typing import Optional, Union
 from pydantic import BaseModel
 
@@ -249,7 +250,31 @@ def _period_key(value: Optional[str], period: str) -> str:
     return parsed.date().isoformat()
 
 
+def _apply_actual(row: dict, revenue_key: str = "actual_daily_total_revenue") -> None:
+    original = row.setdefault("odoo_revenue", row.get("rent_amount", row.get(revenue_key, 0)))
+    actual = row.get("actual")
+    row[revenue_key] = float(str(actual).replace(",", "")) if actual is not None and str(actual).strip() else original
+    cost = row.get("daily_total_cost", row.get("cost_total", 0)) or 0
+    row["actual_net_profit"] = row[revenue_key] - cost
+    row["daily_net_profit"] = row["actual_net_profit"]
+
+
+def _apply_year_edits(payload: dict) -> dict:
+    by_day = {}
+    for row in payload.get("rows", []):
+        day = row["trip_day"]
+        if day not in by_day:
+            by_day[day] = get_custom_entries(day)
+        entry = by_day[day].get(f"trip:{row['trip_id']}")
+        row["actual"] = entry.get("actual") if entry else None
+        row["remark"] = entry.get("remark") if entry else None
+        _apply_actual(row, "revenue_total")
+    return payload
+
+
 def _daily_profit_totals(rows: list[dict]) -> dict:
+    for row in rows:
+        _apply_actual(row)
     posted = [row for row in rows if row.get("receivable_posted")]
     pending = [row for row in rows if not row.get("receivable_posted")]
     posted_profit = sum(row["actual_net_profit"] for row in posted)
@@ -263,7 +288,7 @@ def _daily_profit_totals(rows: list[dict]) -> dict:
                 pass
     return {
         "vehicle_count": len(rows),
-        "rent_total": sum(row["actual_daily_total_revenue"] for row in rows),
+        "rent_total": sum(row.get("rent_amount", row["actual_daily_total_revenue"]) for row in rows),
         "cost_total": sum(row["daily_total_cost"] for row in rows),
         "revenue_total": sum(row["actual_daily_total_revenue"] for row in rows),
         "actual_total": sum(actual_nums) if actual_nums else 0,
@@ -1418,7 +1443,7 @@ async def daily_profit_report(
                     for r in cached["rows"]:
                         rk = r.get("row_key") or f"{r.get('plate_number')}:{r.get('trip_id') or r.get('no')}"
                         r["row_key"] = rk
-                        c = custom_map.get(rk) or custom_map.get(f"plate:{r.get('plate_number')}") or custom_map.get(f"trip:{r.get('trip_id')}")
+                        c = custom_map.get(rk) or custom_map.get(f"trip:{r.get('trip_id')}")
                         if c:
                             r["actual"] = c.get("actual")
                             if c.get("remark") is not None:
@@ -1662,7 +1687,7 @@ async def daily_profit_report(
         route = "-".join(route_parts) if route_parts else ""
         note = ""
         row_key = f"{row.plate_number}:{row.trip_id}" if row.trip_id else f"{row.plate_number}:{row.no}"
-        custom = custom_map.get(row_key) or custom_map.get(f"plate:{row.plate_number}") or custom_map.get(f"trip:{row.trip_id}") or {}
+        custom = custom_map.get(row_key) or custom_map.get(f"trip:{row.trip_id}") or {}
         actual_val = custom.get("actual")
         remark_val = custom.get("remark") if custom.get("remark") is not None else (row.revenue_description or "")
 
@@ -1695,7 +1720,7 @@ async def daily_profit_report(
         eff_custom_map = get_custom_entries(effective_date)
         if eff_custom_map:
             for r in rows:
-                c = eff_custom_map.get(r["row_key"]) or eff_custom_map.get(f"plate:{r['plate_number']}") or eff_custom_map.get(f"trip:{r['trip_id']}")
+                c = eff_custom_map.get(r["row_key"]) or eff_custom_map.get(f"trip:{r['trip_id']}")
                 if c:
                     r["actual"] = c.get("actual")
                     if c.get("remark") is not None:
@@ -1734,7 +1759,18 @@ async def save_daily_profit_custom_data(
 ) -> dict:
     """Save manager overrides for Actual and Remark on daily reports to persistent VPS storage."""
     manager_name = user.get("username") or user.get("name") or "manager"
-    report_date = payload.report_date
+    try:
+        report_date = date.fromisoformat(payload.report_date).isoformat()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid report date")
+    for item in payload.updates or [payload]:
+        if item.actual is not None and item.actual.strip():
+            try:
+                value = float(item.actual.replace(",", ""))
+                if not math.isfinite(value):
+                    raise ValueError()
+            except ValueError:
+                raise HTTPException(status_code=422, detail="Actual revenue must be a finite number")
 
     count = 0
     if payload.updates:
@@ -1762,13 +1798,16 @@ async def save_daily_profit_custom_data(
         count = 1
 
     custom_map = get_custom_entries(report_date)
-    for ckey in [f"fleet:reports:daily-profit:v16:{report_date}", "fleet:reports:daily-profit:v16:today"]:
+    keys = [f"fleet:reports:daily-profit:v16:{report_date}"]
+    if report_date == datetime.now(ZoneInfo("Africa/Addis_Ababa")).date().isoformat():
+        keys.append("fleet:reports:daily-profit:v16:today")
+    for ckey in keys:
         cached = cache_get(ckey) or cache_get_stale(ckey)
         if cached and isinstance(cached.get("rows"), list):
             for r in cached["rows"]:
                 rk = r.get("row_key") or f"{r.get('plate_number')}:{r.get('trip_id') or r.get('no')}"
                 r["row_key"] = rk
-                c = custom_map.get(rk) or custom_map.get(f"plate:{r.get('plate_number')}") or custom_map.get(f"trip:{r.get('trip_id')}")
+                c = custom_map.get(rk) or custom_map.get(f"trip:{r.get('trip_id')}")
                 if c:
                     r["actual"] = c.get("actual")
                     if c.get("remark") is not None:
@@ -1801,7 +1840,7 @@ async def yearly_profit_report(
     if not refresh:
         cached = cache_get(cache_key) or cache_get_stale(cache_key)
         if cached is not None:
-            return cached
+            return _apply_year_edits(cached)
     try:
         vehicle_result = await db.execute(text("""
             SELECT
@@ -1879,7 +1918,7 @@ async def yearly_profit_report(
         if isinstance(saved, dict):
             saved = dict(saved)
             saved["_warning"] = "Showing the saved copy. The live database did not answer."
-            return saved
+            return _apply_year_edits(saved)
         raise
     vehicles = []
     for row in vehicle_result.fetchall():
@@ -1912,7 +1951,7 @@ async def yearly_profit_report(
         "rows": rows,
     }
     cache_set(cache_key, response, ttl_seconds=60)
-    return response
+    return _apply_year_edits(response)
 
 
 @router.get("/income-statement")
