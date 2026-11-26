@@ -528,6 +528,12 @@ export default function ReportsPage() {
       const nextRows = prev.rows.map((row) => {
         const rk = row.row_key || `${row.plate_number}:${row.trip_id || row.no}`;
         if (rk === rowKey) {
+          if (field === "actual") {
+            const entered = Number(value.replace(/,/g, "").trim());
+            const revenue = value.trim() && Number.isFinite(entered) ? entered : Number(row.rent_amount || 0);
+            const profit = revenue - Number(row.daily_total_cost || 0);
+            return { ...row, actual: value, actual_daily_total_revenue: revenue, actual_net_profit: profit, daily_net_profit: profit };
+          }
           return { ...row, [field]: value };
         }
         return row;
@@ -535,8 +541,8 @@ export default function ReportsPage() {
       const actualNums = nextRows
         .map((r) => r.actual)
         .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
-        .map((v) => parseFloat(String(v).replace(/,/g, "").trim()))
-        .filter((n) => !isNaN(n));
+        .map((v) => Number(String(v).replace(/,/g, "").trim()))
+        .filter((n) => Number.isFinite(n));
       const actualTotal = actualNums.length > 0 ? actualNums.reduce((a, b) => a + b, 0) : 0;
       return {
         ...prev,
@@ -544,6 +550,9 @@ export default function ReportsPage() {
         totals: {
           ...prev.totals,
           actual_total: actualTotal,
+          revenue_total: nextRows.reduce((sum, row) => sum + Number(row.actual_daily_total_revenue || 0), 0),
+          net_profit_total: nextRows.reduce((sum, row) => sum + Number(row.actual_net_profit || 0), 0),
+          daily_net_profit_total: nextRows.reduce((sum, row) => sum + Number(row.daily_net_profit || 0), 0),
         },
       };
     });
@@ -1171,6 +1180,17 @@ export default function ReportsPage() {
     const buffer = await workbook.xlsx.writeBuffer();
     saveAs(new Blob([buffer]), `Location_Summary_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
+
+  const dailyVisibleRows = dailyProfit
+    ? filterRows(dailyProfit.rows as unknown as Record<string, unknown>[]) as unknown as DailyProfitRow[]
+    : [];
+  const dailyVisibleTotals = dailyVisibleRows.reduce((totals, row) => {
+    const actual = Number(String(row.actual ?? "").replace(/,/g, "").trim());
+    totals.revenue += Number(row.rent_amount || 0);
+    totals.cost += Number(row.daily_total_cost || 0);
+    totals.actual += Number.isFinite(actual) ? actual : 0;
+    return totals;
+  }, { revenue: 0, cost: 0, actual: 0 });
 
   return (
     <div className="app-shell">
@@ -1818,7 +1838,7 @@ export default function ReportsPage() {
                 Date - {dailyProfit.report_date || "No financial date"}
               </div>
               <div style={{ overflowX: "auto", padding: "16px 24px 24px" }}>
-                <table className="fleet-table" style={{ border: "1px solid var(--border)", borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                <table className="fleet-table daily-profit-table" style={{ border: "1px solid var(--border)", borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
                   <thead>
                     <tr>
                       {["No", "Driver", "Plate", "Route", "Total Daily Revenue", "Cost", "Actual Daily Revenue", "Remark"].map((h, index) => (
@@ -1832,7 +1852,7 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(filterRows(dailyProfit.rows as unknown as Record<string, unknown>[]) as unknown as typeof dailyProfit.rows).length === 0 ? (
+                    {dailyVisibleRows.length === 0 ? (
                       <tr>
                         <td
                           colSpan={8}
@@ -1847,7 +1867,7 @@ export default function ReportsPage() {
                           No revenue or expense rows found for this date.
                         </td>
                       </tr>
-                    ) : (filterRows(dailyProfit.rows as unknown as Record<string, unknown>[]) as unknown as typeof dailyProfit.rows).map((r) => {
+                    ) : dailyVisibleRows.map((r) => {
                       const rowKey = r.row_key || `${r.plate_number}:${r.trip_id || r.no}`;
                       return (
                         <tr key={rowKey}>
@@ -1925,10 +1945,16 @@ export default function ReportsPage() {
                   </tbody>
                   {dailyProfit.rows.length > 0 && (
                     <tfoot>
+                      <tr className="daily-profit-totals">
+                        <th scope="row" colSpan={4}>Totals for displayed rows</th>
+                        <td aria-label="Total revenue">{money(dailyVisibleTotals.revenue)}</td>
+                        <td aria-label="Total cost">{money(dailyVisibleTotals.cost)}</td>
+                        <td aria-label="Total actual revenue">{money(dailyVisibleTotals.actual)}</td>
+                        <td />
+                      </tr>
                       <tr>
                         <td colSpan={8} style={{ border: "1px solid var(--border)", padding: "8px 12px", backgroundColor: "#7fe57f", color: "#000", fontWeight: "bold", textAlign: "left", fontStyle: "italic" }}>
                           Profit {money(dailyProfit.totals.net_profit_total)}
-                          {dailyProfit.totals.actual_total ? `  |  Actual Revenue Total: ${money(dailyProfit.totals.actual_total)}` : ""}
                         </td>
                       </tr>
                     </tfoot>

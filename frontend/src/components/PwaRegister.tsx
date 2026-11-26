@@ -14,21 +14,6 @@ export default function PwaRegister() {
       const message = String(event.message || "");
       if (message.includes("ChunkLoadError") || message.includes("Failed to load chunk")) reloadOnce();
     };
-    const dropStackedShells = () => {
-      const shells = document.querySelectorAll(".app-shell");
-      if (shells.length > 1) {
-        shells.forEach((node, index) => {
-          if (index < shells.length - 1) node.remove();
-        });
-      }
-      document.querySelectorAll("body > .leaflet-container, body > .leaflet-pane").forEach((node) => node.remove());
-    };
-    const onClick = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element) || !target.closest(".nav-btn")) return;
-      window.setTimeout(dropStackedShells, 350);
-    };
-    document.addEventListener("click", onClick);
     window.addEventListener("error", onError);
     let stopped = false;
     let timer: number | undefined;
@@ -63,7 +48,6 @@ export default function PwaRegister() {
       window.clearInterval(timer);
       window.removeEventListener("load", register);
       window.removeEventListener("error", onError);
-      document.removeEventListener("click", onClick);
       if ("serviceWorker" in navigator) navigator.serviceWorker.removeEventListener("controllerchange", warmCurrentPage);
     };
   }, []);

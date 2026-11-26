@@ -3386,3 +3386,22 @@ html.dark .leaflet-tile { filter: brightness(0.8) invert(0.15); }
   .finance-cards, .finance-facts, .finance-split { grid-template-columns: 1fr; }
   .finance-detail-row td { padding-left: 16px; }
 }
+
+/* Keep report amounts and totals aligned under their financial columns. */
+.daily-profit-table td:nth-child(5),
+.daily-profit-table td:nth-child(6),
+.daily-profit-table td:nth-child(7),
+.daily-profit-table .daily-profit-totals td {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  text-align: right;
+  min-width: 140px;
+}
+.daily-profit-table .daily-profit-totals th,
+.daily-profit-table .daily-profit-totals td {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  font-weight: 700;
+  background: var(--panel-2);
+}
+.daily-profit-table .daily-profit-totals th { text-align: left; }

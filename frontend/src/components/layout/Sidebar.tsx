@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   CreditCard,
@@ -16,7 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { yieldFleetSync, logoutFleetSession } from "@/lib/api";
+import { yieldFleetSync, logoutFleetSession, fleetViewPath } from "@/lib/api";
 import { storedFleetUser } from "@/lib/scope";
 
 export type SidebarView =
@@ -56,6 +56,7 @@ export default function Sidebar({ currentView, onViewChange, mobileOpen, onClose
   const [role, setRole] = useState("");
   const router = useRouter();
   const supervisor = role === "supervisor";
+  const pathname = usePathname();
 
   useEffect(() => {
     const savedRole = storedFleetUser()?.role || "";
@@ -115,7 +116,7 @@ export default function Sidebar({ currentView, onViewChange, mobileOpen, onClose
       </div>
 
       {/* Nav */}
-      <nav className="sidebar-nav" id="nav">
+      <nav className="sidebar-nav" id="nav" onClick={() => onCloseMobile?.()}>
         {!collapsed && <div className="nav-section">{supervisor ? "Assigned vehicles" : "Dashboard"}</div>}
         {supervisor && (
           <>
@@ -147,7 +148,8 @@ export default function Sidebar({ currentView, onViewChange, mobileOpen, onClose
               className={`nav-btn${isActive ? " active" : ""}`}
               onClick={() => {
                 if (item.view === "map") yieldFleetSync();
-                onViewChange(item.view, item.status);
+                if (pathname === "/") onViewChange(item.view, item.status);
+                else router.push(fleetViewPath(item.view));
                 onCloseMobile?.();
               }}
               title={collapsed ? item.label : undefined}
