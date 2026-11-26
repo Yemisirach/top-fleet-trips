@@ -239,11 +239,13 @@ export interface FinanceTripDetail extends FinanceTrip {
 
 export interface DailyProfitRow {
   no: number;
+  row_key?: string;
   driver_name: string;
   plate_number: string;
   rent_amount: number;
   daily_total_cost: number;
   actual_daily_total_revenue: number;
+  actual?: number | string | null;
   unconfirmed_amount?: number;
   latest_receivable_amount?: number;
   latest_receivable_state?: string;
@@ -254,6 +256,7 @@ export interface DailyProfitRow {
   receivable_posted?: boolean;
   profit_note?: string;
   remarks: string;
+  remark?: string;
   revenue_description?: string;
   trip_id?: string | number;
   report_date?: string;
@@ -267,6 +270,7 @@ export interface DailyProfit {
     rent_total: number;
     cost_total: number;
     revenue_total: number;
+    actual_total?: number;
     unconfirmed_total?: number;
     net_profit_total: number;
     daily_net_profit_total: number;

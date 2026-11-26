@@ -52,6 +52,16 @@ def cache_set(key: str, value: Any, ttl_seconds: int = CACHE_TTL_SECONDS) -> Non
         return
 
 
+def cache_del(key: str) -> None:
+    redis = _redis()
+    if redis is None:
+        return
+    try:
+        redis.delete(key, f"{key}:stale", f"{key}:stored_at")
+    except Exception:
+        return
+
+
 LAST_SYNC_KEY = "fleet:server-last-sync"
 
 

@@ -2,7 +2,8 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 import asyncio
 import re
-from typing import Optional
+from typing import Optional, Union
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
@@ -13,9 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_manager, require_user
 from app.core.scope import scope_location_rows, scope_location_summary
-from app.core.server_cache import cache_get, cache_get_stale, cache_set
+from app.core.server_cache import cache_del, cache_get, cache_get_stale, cache_set
 from app.core.database import AsyncSessionLocal, get_session
 from app.services.journey_assembly import fetch_vehicle_location_rows
+from app.services.daily_custom_store import (
+    get_custom_entries,
+    save_custom_entry,
+    save_custom_entries_bulk,
+)
 
 router = APIRouter()
 
@@ -247,11 +253,20 @@ def _daily_profit_totals(rows: list[dict]) -> dict:
     posted = [row for row in rows if row.get("receivable_posted")]
     pending = [row for row in rows if not row.get("receivable_posted")]
     posted_profit = sum(row["actual_net_profit"] for row in posted)
+    actual_nums = []
+    for r in rows:
+        val = r.get("actual")
+        if val is not None and str(val).strip():
+            try:
+                actual_nums.append(float(str(val).replace(",", "").strip()))
+            except (ValueError, TypeError):
+                pass
     return {
         "vehicle_count": len(rows),
         "rent_total": sum(row["actual_daily_total_revenue"] for row in rows),
         "cost_total": sum(row["daily_total_cost"] for row in rows),
         "revenue_total": sum(row["actual_daily_total_revenue"] for row in rows),
+        "actual_total": sum(actual_nums) if actual_nums else 0,
         "unconfirmed_total": sum(row.get("unconfirmed_amount") or 0 for row in rows),
         "net_profit_total": sum(row["actual_net_profit"] for row in rows),
         "daily_net_profit_total": sum(row["actual_net_profit"] for row in rows),
@@ -1397,6 +1412,18 @@ async def daily_profit_report(
         for key in lookup_keys:
             cached = cache_get(key) or cache_get_stale(key)
             if cached is not None:
+                target_date = requested or cached.get("report_date") or datetime.now(ZoneInfo("Africa/Addis_Ababa")).date().isoformat()
+                custom_map = get_custom_entries(target_date)
+                if custom_map and isinstance(cached.get("rows"), list):
+                    for r in cached["rows"]:
+                        rk = r.get("row_key") or f"{r.get('plate_number')}:{r.get('trip_id') or r.get('no')}"
+                        r["row_key"] = rk
+                        c = custom_map.get(rk) or custom_map.get(f"plate:{r.get('plate_number')}") or custom_map.get(f"trip:{r.get('trip_id')}")
+                        if c:
+                            r["actual"] = c.get("actual")
+                            if c.get("remark") is not None:
+                                r["remark"] = c.get("remark")
+                    cached["totals"] = _daily_profit_totals(cached["rows"])
                 return cached
 
     rows_result = await db.execute(text("""
@@ -1623,6 +1650,7 @@ async def daily_profit_report(
         ORDER BY no
         LIMIT 500
     """), {"report_date": report_date})
+    custom_map = get_custom_entries(requested or datetime.now(ZoneInfo("Africa/Addis_Ababa")).date().isoformat())
     rows = []
     for row in rows_result.fetchall():
         revenue = _as_float(row.revenue_total)
@@ -1633,13 +1661,20 @@ async def daily_profit_report(
         route_parts = [part for part in (row.departure_name, row.destination_name) if part]
         route = "-".join(route_parts) if route_parts else ""
         note = ""
+        row_key = f"{row.plate_number}:{row.trip_id}" if row.trip_id else f"{row.plate_number}:{row.no}"
+        custom = custom_map.get(row_key) or custom_map.get(f"plate:{row.plate_number}") or custom_map.get(f"trip:{row.trip_id}") or {}
+        actual_val = custom.get("actual")
+        remark_val = custom.get("remark") if custom.get("remark") is not None else (row.revenue_description or "")
+
         rows.append({
             "no": row.no,
+            "row_key": row_key,
             "driver_name": row.driver_name or "Unassigned",
             "plate_number": row.plate_number or "N/A",
             "rent_amount": revenue,
             "daily_total_cost": cost,
             "actual_daily_total_revenue": revenue,
+            "actual": actual_val,
             "unconfirmed_amount": unconfirmed,
             "latest_receivable_amount": 0,
             "latest_receivable_state": "",
@@ -1650,11 +1685,21 @@ async def daily_profit_report(
             "receivable_posted": receivable_posted,
             "profit_note": note,
             "remarks": route,
+            "remark": remark_val,
             "revenue_description": row.revenue_description or "",
             "trip_id": row.trip_id,
             "report_date": str(row.trip_day) if row.trip_day else None,
         })
     effective_date = str(rows[0]["report_date"]) if rows else (str(report_date) if report_date else None)
+    if effective_date and effective_date != (requested or "today"):
+        eff_custom_map = get_custom_entries(effective_date)
+        if eff_custom_map:
+            for r in rows:
+                c = eff_custom_map.get(r["row_key"]) or eff_custom_map.get(f"plate:{r['plate_number']}") or eff_custom_map.get(f"trip:{r['trip_id']}")
+                if c:
+                    r["actual"] = c.get("actual")
+                    if c.get("remark") is not None:
+                        r["remark"] = c.get("remark")
     response = {
         "report_date": effective_date,
         "rows": rows,
@@ -1662,6 +1707,82 @@ async def daily_profit_report(
     }
     cache_set(cache_key, response)
     return response
+
+
+class DailyProfitCustomUpdate(BaseModel):
+    row_key: str
+    actual: Optional[str] = None
+    remark: Optional[str] = None
+    plate_number: Optional[str] = None
+    trip_id: Optional[Union[int, str]] = None
+
+
+class DailyProfitCustomPayload(BaseModel):
+    report_date: str
+    updates: Optional[list[DailyProfitCustomUpdate]] = None
+    row_key: Optional[str] = None
+    actual: Optional[str] = None
+    remark: Optional[str] = None
+    plate_number: Optional[str] = None
+    trip_id: Optional[Union[int, str]] = None
+
+
+@router.post("/daily-profit/custom")
+async def save_daily_profit_custom_data(
+    payload: DailyProfitCustomPayload,
+    user: dict = Depends(require_manager),
+) -> dict:
+    """Save manager overrides for Actual and Remark on daily reports to persistent VPS storage."""
+    manager_name = user.get("username") or user.get("name") or "manager"
+    report_date = payload.report_date
+
+    count = 0
+    if payload.updates:
+        entries = [
+            {
+                "row_key": item.row_key,
+                "actual": item.actual,
+                "remark": item.remark,
+                "plate_number": item.plate_number,
+                "trip_id": str(item.trip_id) if item.trip_id is not None else None,
+            }
+            for item in payload.updates
+        ]
+        count = save_custom_entries_bulk(report_date, entries, updated_by=manager_name)
+    elif payload.row_key:
+        save_custom_entry(
+            report_date=report_date,
+            row_key=payload.row_key,
+            actual=payload.actual,
+            remark=payload.remark,
+            plate_number=payload.plate_number,
+            trip_id=str(payload.trip_id) if payload.trip_id is not None else None,
+            updated_by=manager_name,
+        )
+        count = 1
+
+    custom_map = get_custom_entries(report_date)
+    for ckey in [f"fleet:reports:daily-profit:v16:{report_date}", "fleet:reports:daily-profit:v16:today"]:
+        cached = cache_get(ckey) or cache_get_stale(ckey)
+        if cached and isinstance(cached.get("rows"), list):
+            for r in cached["rows"]:
+                rk = r.get("row_key") or f"{r.get('plate_number')}:{r.get('trip_id') or r.get('no')}"
+                r["row_key"] = rk
+                c = custom_map.get(rk) or custom_map.get(f"plate:{r.get('plate_number')}") or custom_map.get(f"trip:{r.get('trip_id')}")
+                if c:
+                    r["actual"] = c.get("actual")
+                    if c.get("remark") is not None:
+                        r["remark"] = c.get("remark")
+            cached["totals"] = _daily_profit_totals(cached["rows"])
+            cache_set(ckey, cached)
+        else:
+            cache_del(ckey)
+
+    return {
+        "ok": True,
+        "saved_count": count,
+        "report_date": report_date,
+    }
 
 
 @router.get("/yearly-profit")

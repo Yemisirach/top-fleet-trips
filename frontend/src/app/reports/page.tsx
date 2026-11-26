@@ -7,6 +7,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LayoutDashboard, Moon, Sun, Plus, RefreshCw, Menu, ChevronDown, ChevronRight, Pencil } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
+import { useFleetUser } from "@/hooks/useFleetUser";
+import { isManager } from "@/lib/scope";
 import Sidebar, { type SidebarView } from "@/components/layout/Sidebar";
 import BackButton from "@/components/navigation/BackButton";
 import GpsLocationList, { type GpsPlace } from "@/components/reports/GpsLocationList";
@@ -145,6 +147,9 @@ export default function ReportsPage() {
   const [financeGroupBy, setFinanceGroupBy] = useState("all");
   const [dailyProfit, setDailyProfit] = useState<DailyProfit | null>(null);
   const [dailyDate, setDailyDate] = useState("");
+  const fleetUser = useFleetUser();
+  const isMgr = isManager(fleetUser);
+  const [customSaveStatus, setCustomSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [whatsappFormat, setWhatsappFormat] = useState("default");
   const [whatsappSummary, setWhatsappSummary] = useState<WhatsappSummary | null>(null);
   const [filterText, setFilterText] = useState("");
@@ -517,6 +522,87 @@ export default function ReportsPage() {
     );
   }, [dailySupervisorRows, dailySupervisorTotal, paymentFilterDate]);
 
+  const updateDailyProfitCell = useCallback((rowKey: string, field: "actual" | "remark", value: string) => {
+    setDailyProfit((prev) => {
+      if (!prev) return prev;
+      const nextRows = prev.rows.map((row) => {
+        const rk = row.row_key || `${row.plate_number}:${row.trip_id || row.no}`;
+        if (rk === rowKey) {
+          return { ...row, [field]: value };
+        }
+        return row;
+      });
+      const actualNums = nextRows
+        .map((r) => r.actual)
+        .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
+        .map((v) => parseFloat(String(v).replace(/,/g, "").trim()))
+        .filter((n) => !isNaN(n));
+      const actualTotal = actualNums.length > 0 ? actualNums.reduce((a, b) => a + b, 0) : 0;
+      return {
+        ...prev,
+        rows: nextRows,
+        totals: {
+          ...prev.totals,
+          actual_total: actualTotal,
+        },
+      };
+    });
+  }, []);
+
+  const saveDailyCustomRow = useCallback(async (row: DailyProfitRow) => {
+    if (!isMgr || !dailyProfit) return;
+    const reportDate = dailyProfit.report_date || dailyDate || new Date().toISOString().slice(0, 10);
+    const rowKey = row.row_key || `${row.plate_number}:${row.trip_id || row.no}`;
+    setCustomSaveStatus("saving");
+    try {
+      await fetchJson(`${API_BASE}/reports/daily-profit/custom`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_date: reportDate,
+          row_key: rowKey,
+          actual: row.actual !== undefined && row.actual !== null ? String(row.actual) : null,
+          remark: row.remark !== undefined && row.remark !== null ? String(row.remark) : null,
+          plate_number: row.plate_number,
+          trip_id: row.trip_id,
+        }),
+      });
+      setCustomSaveStatus("saved");
+      setTimeout(() => setCustomSaveStatus("idle"), 2500);
+    } catch (err) {
+      console.error("Failed to save daily custom entry to VPS", err);
+      setCustomSaveStatus("error");
+    }
+  }, [isMgr, dailyProfit, dailyDate]);
+
+  const saveAllDailyCustomRows = useCallback(async () => {
+    if (!isMgr || !dailyProfit || !dailyProfit.rows.length) return;
+    const reportDate = dailyProfit.report_date || dailyDate || new Date().toISOString().slice(0, 10);
+    setCustomSaveStatus("saving");
+    try {
+      const updates = dailyProfit.rows.map((r) => ({
+        row_key: r.row_key || `${r.plate_number}:${r.trip_id || r.no}`,
+        actual: r.actual !== undefined && r.actual !== null ? String(r.actual) : null,
+        remark: r.remark !== undefined && r.remark !== null ? String(r.remark) : null,
+        plate_number: r.plate_number,
+        trip_id: r.trip_id,
+      }));
+      await fetchJson(`${API_BASE}/reports/daily-profit/custom`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_date: reportDate,
+          updates,
+        }),
+      });
+      setCustomSaveStatus("saved");
+      setTimeout(() => setCustomSaveStatus("idle"), 2500);
+    } catch (err) {
+      console.error("Failed to save all custom entries to VPS", err);
+      setCustomSaveStatus("error");
+    }
+  }, [isMgr, dailyProfit, dailyDate]);
+
   const exportDailyProfit = useCallback(async () => {
     if (!dailyProfit) return;
     
@@ -549,6 +635,12 @@ export default function ReportsPage() {
 
     // Data Rows
     dailyProfit.rows.forEach((r: DailyProfitRow) => {
+      const actualVal = r.actual !== undefined && r.actual !== null && String(r.actual).trim() !== ""
+        ? (isNaN(Number(r.actual)) ? r.actual : Number(r.actual))
+        : '';
+      const remarkVal = r.remark !== undefined && r.remark !== null && String(r.remark).trim() !== ""
+        ? r.remark
+        : (r.revenue_description || '');
       const row = sheet.addRow([
         r.no,
         r.driver_name,
@@ -556,16 +648,18 @@ export default function ReportsPage() {
         r.remarks || '',
         r.actual_daily_total_revenue || '',
         r.daily_total_cost || '',
-        '',
-        r.revenue_description || '',
+        actualVal,
+        remarkVal,
       ]);
       row.eachCell((cell, colNumber) => {
         cell.font = { name: 'Times New Roman', size: 11 };
         cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
         
-        if (colNumber >= 5 && colNumber <= 6 && r.receivable_posted) {
+        if (colNumber >= 5 && colNumber <= 7) {
           cell.alignment = { horizontal: 'right', vertical: 'middle' };
-          cell.numFmt = '#,##0.00';
+          if (typeof cell.value === 'number') {
+            cell.numFmt = '#,##0.00';
+          }
         } else if (colNumber === 1 || colNumber === 3) {
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         } else {
@@ -1686,12 +1780,40 @@ export default function ReportsPage() {
               <div className="card"><div className="card-label">Report Date</div><div className="card-value">{dailyProfit.report_date || "No financial date"}</div></div>
               <div className="card"><div className="card-label">Vehicles</div><div className="card-value">{dailyProfit.totals.vehicle_count}</div></div>
               <div className="card"><div className="card-label">Revenue</div><div className="card-value green">{money(dailyProfit.totals.revenue_total)}</div></div>
+              {dailyProfit.totals.actual_total !== undefined && dailyProfit.totals.actual_total > 0 && (
+                <div className="card"><div className="card-label">Actual Revenue</div><div className="card-value green">{money(dailyProfit.totals.actual_total)}</div></div>
+              )}
               <div className="card"><div className="card-label">Unconfirmed</div><div className="card-value">{money(dailyProfit.totals.unconfirmed_total || 0)}</div></div>
               <div className="card"><div className="card-label">Cost</div><div className="card-value">{money(dailyProfit.totals.cost_total)}</div></div>
               <div className="card"><div className="card-label">Posted Profit</div><div className={`card-value ${dailyProfit.totals.net_profit_total >= 0 ? "green" : "red"}`}>{money(dailyProfit.totals.net_profit_total)}</div></div>
             </div>
             <div className="panel">
-              <div className="panel-header"><div className="panel-title">Daily Vehicle Profit</div></div>
+              <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <div className="panel-title">Daily Vehicle Profit</div>
+                {isMgr && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {customSaveStatus === "saving" && (
+                      <span style={{ fontSize: 12, color: "var(--primary)", display: "flex", alignItems: "center", gap: 4 }}>
+                        <RefreshCw size={13} className="spin" /> Saving to VPS...
+                      </span>
+                    )}
+                    {customSaveStatus === "saved" && (
+                      <span style={{ fontSize: 12, color: "#16a34a", fontWeight: 600 }}>✓ Saved to VPS</span>
+                    )}
+                    {customSaveStatus === "error" && (
+                      <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 600 }}>⚠ Save failed</span>
+                    )}
+                    <button
+                      className="fleet-btn fleet-btn-secondary"
+                      style={{ padding: "4px 12px", fontSize: 12, minHeight: 30 }}
+                      onClick={saveAllDailyCustomRows}
+                      disabled={customSaveStatus === "saving"}
+                    >
+                      Save All Changes
+                    </button>
+                  </div>
+                )}
+              </div>
               <div style={{ padding: "16px 24px 0", fontStyle: "italic", fontWeight: "bold" }}>
                 Date - {dailyProfit.report_date || "No financial date"}
               </div>
@@ -1700,7 +1822,12 @@ export default function ReportsPage() {
                   <thead>
                     <tr>
                       {["No", "Driver", "Plate", "Route", "Total Daily Revenue", "Cost", "Actual Daily Revenue", "Remark"].map((h, index) => (
-                        <th key={`${h}-${index}`} style={{ border: "1px solid var(--border)", padding: "8px 12px", fontStyle: "italic", fontWeight: "normal", textAlign: index === 1 ? "left" : "center", backgroundColor: "transparent" }}>{h}</th>
+                        <th key={`${h}-${index}`} style={{ border: "1px solid var(--border)", padding: "8px 12px", fontStyle: "italic", fontWeight: "normal", textAlign: index === 1 ? "left" : "center", backgroundColor: "transparent" }}>
+                          {h}
+                          {isMgr && (index === 6 || index === 7) && (
+                            <Pencil size={11} style={{ display: "inline", marginLeft: 4, opacity: 0.6 }} />
+                          )}
+                        </th>
                       ))}
                     </tr>
                   </thead>
@@ -1720,29 +1847,88 @@ export default function ReportsPage() {
                           No revenue or expense rows found for this date.
                         </td>
                       </tr>
-                    ) : (filterRows(dailyProfit.rows as unknown as Record<string, unknown>[]) as unknown as typeof dailyProfit.rows).map((r) => (
-                      <tr key={r.no}>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "center", fontStyle: "italic" }}>{r.no}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}>{r.driver_name}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}>{r.plate_number}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", fontStyle: "italic" }}>{r.remarks}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>
-                          {money(r.actual_daily_total_revenue || 0)}
-                          {(r.unconfirmed_amount || 0) > 0 && (
-                            <div className="muted" style={{ fontSize: 11 }}>Unconfirmed {money(r.unconfirmed_amount || 0)}</div>
-                          )}
-                        </td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.daily_total_cost ? money(r.daily_total_cost) : "—"}</td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}></td>
-                        <td style={{ border: "1px solid var(--border)", padding: "6px 12px", fontStyle: "italic" }}>{r.revenue_description || ""}</td>
-                      </tr>
-                    ))}
+                    ) : (filterRows(dailyProfit.rows as unknown as Record<string, unknown>[]) as unknown as typeof dailyProfit.rows).map((r) => {
+                      const rowKey = r.row_key || `${r.plate_number}:${r.trip_id || r.no}`;
+                      return (
+                        <tr key={rowKey}>
+                          <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "center", fontStyle: "italic" }}>{r.no}</td>
+                          <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}>{r.driver_name}</td>
+                          <td style={{ border: "1px solid var(--border)", padding: "6px 12px" }}>{r.plate_number}</td>
+                          <td style={{ border: "1px solid var(--border)", padding: "6px 12px", fontStyle: "italic" }}>{r.remarks}</td>
+                          <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>
+                            {money(r.actual_daily_total_revenue || 0)}
+                            {(r.unconfirmed_amount || 0) > 0 && (
+                              <div className="muted" style={{ fontSize: 11 }}>Unconfirmed {money(r.unconfirmed_amount || 0)}</div>
+                            )}
+                          </td>
+                          <td style={{ border: "1px solid var(--border)", padding: "6px 12px", textAlign: "right" }}>{r.daily_total_cost ? money(r.daily_total_cost) : "—"}</td>
+                          <td style={{ border: "1px solid var(--border)", padding: isMgr ? "4px 8px" : "6px 12px", textAlign: "right" }}>
+                            {isMgr ? (
+                              <input
+                                type="text"
+                                className="fleet-input"
+                                value={r.actual ?? ""}
+                                placeholder="0.00"
+                                onChange={(e) => updateDailyProfitCell(rowKey, "actual", e.target.value)}
+                                onBlur={() => saveDailyCustomRow(r)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
+                                style={{
+                                  width: "100%",
+                                  minWidth: 90,
+                                  padding: "4px 8px",
+                                  fontSize: 12,
+                                  textAlign: "right",
+                                  minHeight: 28,
+                                  height: 28,
+                                }}
+                              />
+                            ) : (
+                              r.actual !== undefined && r.actual !== null && String(r.actual).trim() !== ""
+                                ? (isNaN(Number(r.actual)) ? r.actual : money(Number(r.actual)))
+                                : "—"
+                            )}
+                          </td>
+                          <td style={{ border: "1px solid var(--border)", padding: isMgr ? "4px 8px" : "6px 12px", fontStyle: isMgr ? "normal" : "italic" }}>
+                            {isMgr ? (
+                              <input
+                                type="text"
+                                className="fleet-input"
+                                value={r.remark ?? r.revenue_description ?? ""}
+                                placeholder="Remark..."
+                                onChange={(e) => updateDailyProfitCell(rowKey, "remark", e.target.value)}
+                                onBlur={() => saveDailyCustomRow(r)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
+                                style={{
+                                  width: "100%",
+                                  minWidth: 140,
+                                  padding: "4px 8px",
+                                  fontSize: 12,
+                                  minHeight: 28,
+                                  height: 28,
+                                }}
+                              />
+                            ) : (
+                              r.remark || r.revenue_description || ""
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   {dailyProfit.rows.length > 0 && (
                     <tfoot>
                       <tr>
                         <td colSpan={8} style={{ border: "1px solid var(--border)", padding: "8px 12px", backgroundColor: "#7fe57f", color: "#000", fontWeight: "bold", textAlign: "left", fontStyle: "italic" }}>
                           Profit {money(dailyProfit.totals.net_profit_total)}
+                          {dailyProfit.totals.actual_total ? `  |  Actual Revenue Total: ${money(dailyProfit.totals.actual_total)}` : ""}
                         </td>
                       </tr>
                     </tfoot>

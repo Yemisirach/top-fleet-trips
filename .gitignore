@@ -14,5 +14,9 @@ build/
 *.pyo
 *.log
 *.sqlite3
+*.db
+*.db-wal
+*.db-shm
+backend/data/
 .idea/
 .vscode/

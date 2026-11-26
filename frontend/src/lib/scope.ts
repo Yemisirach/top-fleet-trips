@@ -50,6 +50,10 @@ export function isSupervisor(user?: FleetUser | null) {
   return user?.role === "supervisor";
 }
 
+export function isManager(user?: FleetUser | null) {
+  return user?.role === "manager";
+}
+
 function sameName(left?: string, right?: string) {
   return (left || "").trim().toLowerCase() === (right || "").trim().toLowerCase();
 }
